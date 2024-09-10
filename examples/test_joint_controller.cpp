@@ -5,7 +5,7 @@
 
 using namespace arx;
 
-Arx5JointController *arx5_joint_controller = new Arx5JointController("X5", "can0");
+Arx5JointController *arx5_joint_controller = new Arx5JointController("L5", "can0");
 
 void signal_handler(int signal)
 {
@@ -28,11 +28,11 @@ int main()
                   << ", Pose: " << pose6.transpose() << std::endl;
         usleep(10000); // 10ms
         loop_cnt++;
-        if (loop_cnt % 200 == 0)
-        {
-            arx5_joint_controller->reset_to_home();
-            arx5_joint_controller->set_to_damping();
-        }
+        // if (loop_cnt % 200 == 0)
+        // {
+        //     arx5_joint_controller->reset_to_home();
+        //     arx5_joint_controller->set_to_damping();
+        // }
     }
     return 0;
 }
