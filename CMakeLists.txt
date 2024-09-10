@@ -92,6 +92,19 @@ target_link_libraries(test_cartesian_controller
     soem
 )
 
+add_executable(teleoperation examples/teleoperation.cpp)
+target_link_libraries(teleoperation 
+    ${LIB_DIR}/libhardware.so 
+    ${LIB_DIR}/libsolver.so
+    ArxCartesianController
+    spdlog::spdlog
+    Eigen3::Eigen
+    Threads::Threads
+    kdl_parser
+    orocos-kdl
+    soem
+)
+
 add_subdirectory(python)
 
 install(DIRECTORY ${CMAKE_SOURCE_DIR}/include/
