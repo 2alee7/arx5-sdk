@@ -114,6 +114,7 @@ void Arx5CartesianController::set_eef_cmd(EEFState new_cmd)
     }
     _input_eef_cmd = new_cmd;
     _interp_start_eef_cmd = _output_eef_cmd;
+    _logger->debug("Set eef cmd:" + vec2str(_input_eef_cmd.pose_6d));
 }
 
 std::tuple<EEFState, EEFState> Arx5CartesianController::get_eef_cmd()
@@ -613,6 +614,7 @@ void Arx5CartesianController::_calc_joint_cmd()
                            "get_home_pose().");
             _enter_emergency_state();
         }
+
         ik_results = _solver->inverse_kinematics(_output_eef_cmd.pose_6d, joint_state.pos);
         joint_cmd.gripper_pos = _output_eef_cmd.gripper_pos;
     }
@@ -632,6 +634,7 @@ void Arx5CartesianController::_calc_joint_cmd()
             joint_cmd.torque = _joint_torque_filter.filter(joint_torque);
         }
         _input_joint_cmd = joint_cmd;
+        _logger->debug("Set joint cmd:" + vec2str(_input_joint_cmd.pos));
     }
 }
 
