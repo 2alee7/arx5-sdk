@@ -1,5 +1,6 @@
 #include "app/cartesian_controller.h"
 #include "app/common.h"
+#include "app/joint_controller.h"
 #include "app/solver.h"
 #include <chrono>
 #include <csignal>
@@ -50,6 +51,8 @@ int main()
     Gain gain{dof};
     Arx5Solver solver("../models/arx5.urdf", dof);
 
+    double gripper_width = arx5_leader_controller->get_robot_config().gripper_width;
+
     arx5_leader_controller->reset_to_home();
     arx5_follower_controller->reset_to_home();
 
@@ -72,13 +75,10 @@ int main()
         EEFState leader_eef_state = arx5_leader_controller->get_eef_state();
         // double leader_gripper_pos = leader_eef_state.gripper_pos;
         // std::cout << "Leader Gripper Position: " << leader_gripper_pos << std::endl;
-        Pose6d leader_pose = leader_eef_state.pose_6d;
-        EEFState follower_cmd;
-        follower_cmd = leader_eef_state;
+        // Pose6d leader_pose = leader_eef_state.pose_6d;
+        EEFState follower_cmd = leader_eef_state;
+        follower_cmd.gripper_pos *= gripper_width / 0.002;
         follower_cmd.timestamp = 0.0f;
-
-        double follower_gripper_pos_cmd = follower_cmd.gripper_pos;
-        std::cout << "fol Gripper Position: " << follower_gripper_pos_cmd << std::endl;
 
         // VecDoF leader_cmd = pd_callback(kp, kd, leader_joint_state, follower_joint_state);
         // VecDoF follower_cmd = pd_callback(kp, kd, follower_joint_state, leader_joint_state);

@@ -110,7 +110,7 @@ class RobotConfigFactory
             (VecDoF(6) << 0.6, 0.6, 0.6, 1.8, 1.8, 1.8).finished(),        // ee_vel_max
             0.1,                                                           // gripper_vel_max
             1.5,                                                           // gripper_torque_max
-            0.085,                                                         // gripper_width
+            0.090,                                                         // gripper_width
             4.8,                                                           // gripper_open_readout
             6,                                                             // joint_dof
             std::vector<int>{1, 2, 4, 5, 6, 7},                            // motor_id

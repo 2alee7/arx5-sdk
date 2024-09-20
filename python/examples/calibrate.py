@@ -9,7 +9,7 @@ import arx5_interface as arx5
 
 
 def calibrate_joint(joint_id: int):
-    joint_controller = arx5.Arx5JointController("X5", "can0")
+    joint_controller = arx5.Arx5JointController("L5", "can0")
     gain = arx5.Gain(joint_controller.get_robot_config().joint_dof)
     joint_controller.set_gain(gain)
     joint_controller.enable_background_send_recv()
@@ -22,11 +22,9 @@ def calibrate_joint(joint_id: int):
 
 
 def calibrate_gripper():
-    joint_controller = arx5.Arx5JointController("X5", "can0")
+    joint_controller = arx5.Arx5JointController("L5", "can0")
     joint_controller.calibrate_gripper()
 
 
 if __name__ == "__main__":
-
-    calibrate_joint(4)
-    # calibrate_gripper()
+    calibrate_gripper()
