@@ -70,14 +70,15 @@ int main()
     while (true)
     {
         EEFState leader_eef_state = arx5_leader_controller->get_eef_state();
+        // double leader_gripper_pos = leader_eef_state.gripper_pos;
+        // std::cout << "Leader Gripper Position: " << leader_gripper_pos << std::endl;
         Pose6d leader_pose = leader_eef_state.pose_6d;
         EEFState follower_cmd;
-        follower_cmd.pose_6d = leader_pose;
+        follower_cmd = leader_eef_state;
         follower_cmd.timestamp = 0.0f;
-        // JointState leader_joint_state = arx5_leader_controller->get_joint_state();
 
-        // EEFState follower_eef_state = arx5_follower_controller->get_eef_state();
-        // JointState follower_joint_state = arx5_follower_controller->get_joint_state();
+        double follower_gripper_pos_cmd = follower_cmd.gripper_pos;
+        std::cout << "fol Gripper Position: " << follower_gripper_pos_cmd << std::endl;
 
         // VecDoF leader_cmd = pd_callback(kp, kd, leader_joint_state, follower_joint_state);
         // VecDoF follower_cmd = pd_callback(kp, kd, follower_joint_state, leader_joint_state);

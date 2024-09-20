@@ -114,7 +114,7 @@ void Arx5CartesianController::set_eef_cmd(EEFState new_cmd)
     }
     _input_eef_cmd = new_cmd;
     _interp_start_eef_cmd = _output_eef_cmd;
-    _logger->debug("Set eef cmd:" + vec2str(_input_eef_cmd.pose_6d));
+    // _logger->debug("Set eef cmd:" + vec2str(_input_eef_cmd.pose_6d));
 }
 
 std::tuple<EEFState, EEFState> Arx5CartesianController::get_eef_cmd()
@@ -334,6 +334,7 @@ void Arx5CartesianController::_update_output_cmd()
     {
         if (_output_joint_cmd.gripper_pos < -0.005)
             _logger->debug("Gripper pos cmd clipped from {:.3f} to min: {:.3f}", _output_joint_cmd.gripper_pos, 0.0);
+        _logger->info("Gripper pos cmd clipped from {:.3f} to min: {:.3f}", _output_joint_cmd.gripper_pos, 0.0);
         _output_joint_cmd.gripper_pos = 0;
     }
     else if (_output_joint_cmd.gripper_pos > _robot_config.gripper_width)
@@ -634,7 +635,7 @@ void Arx5CartesianController::_calc_joint_cmd()
             joint_cmd.torque = _joint_torque_filter.filter(joint_torque);
         }
         _input_joint_cmd = joint_cmd;
-        _logger->debug("Set joint cmd:" + vec2str(_input_joint_cmd.pos));
+        // _logger->debug("Set joint cmd:" + vec2str(_input_joint_cmd.pos));
     }
 }
 
