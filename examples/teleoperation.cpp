@@ -73,29 +73,13 @@ int main()
     while (true)
     {
         EEFState leader_eef_state = arx5_leader_controller->get_eef_state();
-        // double leader_gripper_pos = leader_eef_state.gripper_pos;
-        // std::cout << "Leader Gripper Position: " << leader_gripper_pos << std::endl;
-        // Pose6d leader_pose = leader_eef_state.pose_6d;
         EEFState follower_cmd = leader_eef_state;
-        follower_cmd.gripper_pos *= gripper_width / 0.002;
+        follower_cmd.gripper_pos *= 5;
         follower_cmd.timestamp = 0.0f;
 
-        // VecDoF leader_cmd = pd_callback(kp, kd, leader_joint_state, follower_joint_state);
-        // VecDoF follower_cmd = pd_callback(kp, kd, follower_joint_state, leader_joint_state);
-
-        // arx5_leader_controller->set_eef_cmd(follower_eef_state);
-
         arx5_follower_controller->set_eef_cmd(follower_cmd);
-        // std::cout << "Leader Pose: " << leader_pose.transpose() << std::endl;
-        // std::cout << "Follower Command Sent" << std::endl;
 
-        // TODO: publish leader joint state to follower, and vice versa.
-        // Need joint torque cmd interface in cartesian_controller
         std::this_thread::sleep_for(std::chrono::milliseconds(10));
     }
     return 0;
 }
-
-// TODO: define gains for PD controller
-
-// TODO: use performant PD functions (implemented elsewhere if needed) --> FF current + PD current
