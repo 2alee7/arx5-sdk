@@ -14,6 +14,7 @@ find_package(kdl_parser REQUIRED)
 find_package(fmt REQUIRED)
 find_package(spdlog REQUIRED)
 find_package(Boost REQUIRED COMPONENTS container)
+find_package(realsense2 REQUIRED)
 
 set(ARX_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
 add_definitions(-DARX_DIRECTORY="${ARX_DIRECTORY}") # TODO: remove this
@@ -31,6 +32,7 @@ include_directories(
     $ENV{CONDA_PREFIX}/include/
     $ENV{CONDA_PREFIX}/include/urdfdom_headers
 )
+include_directories(${realsense2_INCLUDE_DIR})
 
 add_library(ArxJointController SHARED
     src/app/joint_controller.cpp
@@ -103,6 +105,7 @@ target_link_libraries(teleoperation
     kdl_parser
     orocos-kdl
     soem
+    ${realsense2_LIBRARY}
 )
 
 add_subdirectory(python)

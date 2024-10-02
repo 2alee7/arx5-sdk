@@ -513,12 +513,12 @@ bool Arx5CartesianController::_send_recv()
     {
         int start_send_motor_time_us = get_time_us();
 
-        double gripper_motor_pos = _output_joint_cmd.gripper_pos / _robot_config.gripper_width * 2.4;
-        // _robot_config.gripper_open_readout
+        double gripper_motor_pos = (_output_joint_cmd.gripper_pos / _robot_config.gripper_width) * 4.8;
+        // // _robot_config.gripper_open_readout
         printf("Gripper_pos: %f\n", _output_joint_cmd.gripper_pos);
         printf("Gripper_width: %f\n", _robot_config.gripper_width);
-        printf("Gripper_open_readout: %f\n", _robot_config.gripper_open_readout);
-        printf("Gripper motor pos: %f\n", gripper_motor_pos);
+        // printf("Gripper_open_readout: %f\n", _robot_config.gripper_open_readout);
+        // printf("Gripper motor pos: %f\n", gripper_motor_pos);
         _can_handle.send_DM_motor_cmd(_robot_config.gripper_motor_id, _gain.gripper_kp, _gain.gripper_kd,
                                       gripper_motor_pos, 0, 0);
         int finish_send_motor_time_us = get_time_us();
