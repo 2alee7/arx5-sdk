@@ -20,10 +20,10 @@ set(ARX_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
 add_definitions(-DARX_DIRECTORY="${ARX_DIRECTORY}") # TODO: remove this
 
 if(CMAKE_SYSTEM_PROCESSOR MATCHES "arm.*|arm|aarch64")
-    set(LIB_DIR ${CMAKE_CURRENT_SOURCE_DIR}/lib/aarch64)
+    set(LIB_DIR ${CMAKE_CURRENT_SOURCE_DIR}/control/lib/aarch64)
 
 elseif(CMAKE_SYSTEM_PROCESSOR MATCHES "(x86_64)|(AMD64)|(^i686)")
-    set(LIB_DIR ${CMAKE_CURRENT_SOURCE_DIR}/lib/x86_64)
+    set(LIB_DIR ${CMAKE_CURRENT_SOURCE_DIR}/control/lib/x86_64)
 endif()
 
 include_directories(${CMAKE_SOURCE_DIR}/include)
