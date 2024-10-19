@@ -4,8 +4,10 @@
             "name": "Linux",
             "includePath": [
                 "${workspaceFolder}/**",
-                "${workspaceFolder}/include",
-                "${HOME}/miniforge3/envs/arx-py310/include/**"
+                "${workspaceFolder}/include/**",
+                "${HOME}/miniforge3/envs/arx-py310/include/**",
+                "/usr/include",
+                "/usr/local/include"
             ],
             "defines": [],
             "compilerPath": "/usr/bin/gcc",

@@ -4,10 +4,12 @@
 #include <thread>
 #include <zmq.hpp>
 
-class Arx5Server
+using namespace arx;
+
+class ArxServer
 {
   public:
-    Arx5Server(const std::string &address, int port) : context(1), req_socket(context, ZMQ_REQ)
+    ArxServer(const std::string &address, int port) : context(1), req_socket(context, ZMQ_REQ)
     {
         std::string full_address = "tcp://" + address + ":" + std::to_string(port);
         req_socket.connect(full_address);
@@ -43,12 +45,12 @@ class Arx5Server
 
         // Deserialize EEFState
         std::istringstream iss(serialized_eef_state);
-        EEFState eef_state;
-        iss >> eef_state.pose_6d.x >> eef_state.pose_6d.y >> eef_state.pose_6d.z >> eef_state.pose_6d.roll >>
-            eef_state.pose_6d.pitch >> eef_state.pose_6d.yaw >> eef_state.gripper_pos >> eef_state.gripper_vel >>
-            eef_state.gripper_torque >> eef_state.timestamp;
+        // EEFState eef_state;
+        // iss >> eef_state.pose_6d.x >> eef_state.pose_6d.y >> eef_state.pose_6d.z >> eef_state.pose_6d.roll >>
+        //     eef_state.pose_6d.pitch >> eef_state.pose_6d.yaw >> eef_state.gripper_pos >> eef_state.gripper_vel >>
+        //     eef_state.gripper_torque >> eef_state.timestamp;
 
-        return eef_state;
+        // return eef_state;
     }
 
   private:

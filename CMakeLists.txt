@@ -63,6 +63,21 @@ target_link_libraries(ArxCartesianController
     soem
 )
 
+add_library(ArxClient SHARED
+    communication/src/zmq_client.cpp
+)
+target_link_libraries(ArxClient
+    ${LIB_DIR}/libhardware.so
+    ${LIB_DIR}/libsolver.so
+    ArxCartesianController
+    Eigen3::Eigen
+    Threads::Threads
+    spdlog::spdlog
+    kdl_parser
+    orocos-kdl
+    soem
+)
+
 # Hack for py310 (conda environment is slightly different from other python versions)
 target_include_directories(ArxJointController PUBLIC $ENV{CONDA_PREFIX}/include/kdl_parser  $ENV{CONDA_PREFIX}/include/urdfdom_headers)
 target_include_directories(ArxCartesianController PUBLIC $ENV{CONDA_PREFIX}/include/kdl_parser  $ENV{CONDA_PREFIX}/include/urdfdom_headers)
@@ -105,7 +120,6 @@ target_link_libraries(teleoperation
     kdl_parser
     orocos-kdl
     soem
-    ${realsense2_LIBRARY}
 )
 
 add_subdirectory(python)
