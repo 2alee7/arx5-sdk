@@ -1,0 +1,30 @@
+{
+    "robot_pairs": [
+        {
+            "side": "right",
+            "leader": {
+                "name": "leader_right",
+                "model": "L5",
+                "interface_name": "can1"
+            },
+            "follower": {
+                "name": "follower_right",
+                "model": "L5",
+                "interface_name": "can0"
+            }
+        },
+        {
+            "side": "left",
+            "leader": {
+                "name": "leader_left",
+                "model": "L5",
+                "interface_name": "can2"
+            },
+            "follower": {
+                "name": "follower_left",
+                "model": "L5",
+                "interface_name": "can3"
+            }
+        }
+    ]
+}

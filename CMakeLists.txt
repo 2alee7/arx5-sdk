@@ -97,6 +97,7 @@ target_link_libraries(teleoperation
     ${LIB_DIR}/libhardware.so 
     ${LIB_DIR}/libsolver.so
     ArxCartesianController
+    ArxJointController
     spdlog::spdlog
     Eigen3::Eigen
     Threads::Threads
