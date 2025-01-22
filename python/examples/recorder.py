@@ -61,7 +61,7 @@ def initialize_controllers(config, side=None):
             leader = Arx5CartesianController(
                 pair['leader']['model'],
                 pair['leader']['interface_name'],
-                urdf_path=urdf_path,
+                urdf_path,
             )
             follower = Arx5CartesianController(
                 pair['follower']['model'],
@@ -166,7 +166,7 @@ def record_traj(leader_controller, traj_folder, frame_ct=40):
 def main():
     
     config = load_robot_config(os.path.join(os.path.dirname(os.path.abspath(__file__)), 'teleop_config.json'))
-    controllers = initialize_controllers(config, side="right")
+    controllers = initialize_controllers(config)
     stop_events = []
     threads = []
 

@@ -5,12 +5,12 @@
             "leader": {
                 "name": "leader_right",
                 "model": "L5",
-                "interface_name": "can1"
+                "interface_name": "can0"
             },
             "follower": {
                 "name": "follower_right",
                 "model": "L5",
-                "interface_name": "can0"
+                "interface_name": "can1"
             }
         },
         {
