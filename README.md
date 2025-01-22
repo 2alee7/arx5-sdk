@@ -92,6 +92,19 @@ sudo udevadm control --reload-rules && sudo udevadm trigger
 sudo slcand -o -f -s8 /dev/arxcan0 can0 && sudo ifconfig can0 up
 ```
 
+Example alias for ease (add to ~/.bashrc): 
+
+``` sh
+alias config_arx5='sudo slcand -o -f -s8 /dev/arxcan0 can0 && sudo ifconfig can0 up && sudo slcand -o -f -s8 /dev/arxcan1 can1 && sudo ifconfig can1 up && sudo slcand -o -f -s8 /dev/arxcan2 can2 && sudo ifconfig can2 up && sudo slcand -o -f -s8 /dev/arxcan3 can3 && sudo ifconfig can3 up'
+```
+#### Troubleshooting SLCAND
+
+You may run into the following while trying to activate all connections:
+
+For the error: `ioctl SIOCSIFNAME rename: File exists`, run: `sudo killall slcand` and try again. This error is caused by lingering instances of `slcand` processes if robots are disconnected during operation.
+
+For: `write: Input/output error`, disconnect & reconnect all robots from the machine. This error is caused when an already activated connection is re-activated. For now, all connections need to be activated simultaneously.
+
 
 ### For adapters using candleLight framework
 After plugging the adapter and running `ip a`, you should immediately find a can interface (usually `can0`). If you only have one arm, simply run 
