@@ -26,5 +26,15 @@
                 "interface_name": "can3"
             }
         }
+    ],
+    "cameras": [
+        {
+            "name": "wrist_right",
+            "serial": 111
+        },
+        {
+            "name": "wrist_left",
+            "serial": 222
+        }
     ]
 }
