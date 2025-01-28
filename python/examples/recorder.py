@@ -29,55 +29,40 @@ def initialize_controllers(config, side=None):
     controllers = []
     urdf_path = "../models/arx5.urdf"
 
+    def create_controller_pair(pair):
+        leader = Arx5CartesianController(
+            pair['leader']['model'],
+            pair['leader']['interface_name'],
+            urdf_path,
+        )
+        follower = Arx5CartesianController(
+            pair['follower']['model'],
+            pair['follower']['interface_name'],
+            urdf_path,
+        )
+        gain = Gain(
+            leader.get_controller_config().default_kp / 10000,
+            leader.get_controller_config().default_kd / 1000,
+            0.0,
+            0.0
+        )
+        leader.reset_to_home()
+        follower.reset_to_home()
+        leader.set_gain(gain)  # Set reduced damping coeffs. to leader only
+        controllers.append((leader, follower))
+
     if side:
         # Find the robot pair matching the specified side
         pair = next((p for p in config['robot_pairs'] if p['side'] == side), None)
         if pair:
-            leader = Arx5CartesianController(
-                pair['leader']['model'],
-                pair['leader']['interface_name'],
-                urdf_path,
-            )
-            follower = Arx5CartesianController(
-                pair['follower']['model'],
-                pair['follower']['interface_name'],
-                urdf_path,
-            )
-            gain = Gain(
-                leader.get_controller_config().default_kp / 10000,
-                leader.get_controller_config().default_kd / 1000,
-                0.0,
-                0.0
-            )
-            leader.reset_to_home()
-            follower.reset_to_home()
-            leader.set_gain(gain) # Set reduced damping coeffs. to leader only
-            controllers.append((leader, follower))
+            create_controller_pair(pair)
         else:
             print(f"No robot pair found for side: {side}")
     else:
         # Initialize all robot pairs
         for pair in config['robot_pairs']:
-            leader = Arx5CartesianController(
-                pair['leader']['model'],
-                pair['leader']['interface_name'],
-                urdf_path,
-            )
-            follower = Arx5CartesianController(
-                pair['follower']['model'],
-                pair['follower']['interface_name'],
-                urdf_path,
-            )
-            gain = Gain(
-                leader.get_controller_config().default_kp / 10000,
-                leader.get_controller_config().default_kd / 1000,
-                0.0,
-                0.0
-            )
-            leader.reset_to_home()
-            follower.reset_to_home()
-            leader.set_gain(gain) # Set reduced damping coeffs. to leader only
-            controllers.append((leader, follower))
+            create_controller_pair(pair)
+
     return controllers
 
 # Function to save frames to a specified path
@@ -114,7 +99,7 @@ def control_loop_open(leader_controller, follower_controller, stop_event):
         time.sleep(0.005)
 
 # Function to record a single trajectory
-def record_traj(leader_controller, traj_folder, frame_ct=40):
+def record_traj(pipeline, follower_controller, traj_folder, frame_ct=40):
     joint_states = []
     frame_index = 0
 
