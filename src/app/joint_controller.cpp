@@ -509,7 +509,7 @@ void Arx5JointController::set_joint_cmd(JointState new_cmd)
     std::lock_guard<std::mutex> guard(_cmd_mutex);
     if (new_cmd.gripper_vel != 0 || new_cmd.gripper_torque != 0)
     {
-        _logger->warn("Gripper vel and torque control is not supported yet.");
+        // _logger->warn("Gripper vel and torque control is not supported yet.");
         new_cmd.gripper_vel = 0;
         new_cmd.gripper_torque = 0;
     }

@@ -1,0 +1,7 @@
+
+cd code/arx5-sdk/python/examples
+
+conda activate arx-py310
+python recorder_old.py
+
+config_arx5

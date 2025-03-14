@@ -43,7 +43,7 @@ Arx5CartesianController::~Arx5CartesianController()
     _input_joint_cmd.vel = VecDoF::Zero(_robot_config.joint_dof);
     _input_joint_cmd.torque = VecDoF::Zero(_robot_config.joint_dof);
     _enable_gravity_compensation = false;
-    sleep_ms(2000);
+    sleep_ms(500);
     _destroy_background_threads = true;
     _background_send_recv_thread.join();
     _logger->info("background send_recv task joined");
@@ -101,7 +101,7 @@ void Arx5CartesianController::set_eef_cmd(EEFState new_cmd)
     std::lock_guard<std::mutex> lock(_cmd_mutex);
     if (new_cmd.gripper_vel != 0 || new_cmd.gripper_torque != 0)
     {
-        _logger->warn("Gripper vel and torque control is not supported yet.");
+        // _logger->warn("Gripper vel and torque control is not supported yet.");
         new_cmd.gripper_vel = 0;
         new_cmd.gripper_torque = 0;
     }
@@ -235,7 +235,7 @@ void Arx5CartesianController::reset_to_home()
         set_eef_cmd(eef_cmd);
         sleep_ms(5);
     }
-    sleep_ms(500);
+    sleep_ms(200);
     _logger->info("Finish reset to home");
     _background_send_recv_running = prev_running;
 }
@@ -258,7 +258,7 @@ void Arx5CartesianController::set_to_damping()
     set_gain(target_gain);
     set_eef_cmd(eef_cmd);
 
-    sleep_ms(500);
+    sleep_ms(100);
     _logger->info("Finish set to damping");
 }
 
@@ -444,6 +444,7 @@ void Arx5CartesianController::_check_joint_state_sanity()
 
 void Arx5CartesianController::_enter_emergency_state()
 {
+    reset_to_home();
     Gain damping_gain{_robot_config.joint_dof};
     damping_gain.kd = _controller_config.default_kd;
     damping_gain.kd[1] *= 3;

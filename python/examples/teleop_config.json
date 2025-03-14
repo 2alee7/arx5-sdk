@@ -29,12 +29,20 @@
     ],
     "cameras": [
         {
-            "name": "wrist_right",
-            "serial": 111
+            "name": "top_view",
+            "serial": "218622274589"
         },
         {
-            "name": "wrist_left",
-            "serial": 222
+            "name": "45_deg_view",
+            "serial": "218622278179"
+        },
+        {
+            "name": "wrist_right_view",
+            "serial": "130322272673"
+        },
+        {
+            "name": "wrist_left_view",
+            "serial": "130322271932"
         }
     ]
 }

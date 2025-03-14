@@ -11,14 +11,17 @@ import shutil
 import threading
 import asyncio
 import queue
-import signal
-import argparse
-
-from arx5_interface import Arx5CartesianController, Gain, LogLevel
 
 ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.append(ROOT_DIR)
 os.chdir(ROOT_DIR)
+
+from arx5_interface import Arx5CartesianController, Gain, LogLevel
+
+"""
+Note: All text prompts require the OpenCV window to be in focus. Sorry.
+"""
+
 
 def load_robot_config(config_path):
     with open(config_path, 'r') as file:
@@ -75,15 +78,13 @@ def initialize_cameras(config):
         # Create a RealSense pipeline
         pipeline = rs.pipeline()
         config = rs.config()
-        print("Enabling camera with serial number:", serial_no)
         config.enable_device(serial_no)
         config.enable_stream(rs.stream.color, 848, 480, rs.format.bgra8, 30)
         pipeline.start(config)
         pipelines.append(pipeline)
 
-    for cam in config['cameras']:
-        print("Initializing camera", cam['name'], "with serial number:", cam['serial'])
-        init_camera_pipeline(cam['serial'])
+    for id, serial in config['cameras']:
+        init_camera_pipeline(serial)
 
     return pipelines
 
@@ -96,11 +97,11 @@ def poll_joint_states(controller, joint_states_queue, stop_event, recording_even
             joint_states_queue.put((timestamp, state))
         time.sleep(rate)
 
-def frame_capture_loop(pipelines, stop_event, recording_event, frames_queue, latest_frames):
+def frame_capture_loop(pipelines, stop_event, recording_event, frames_queue):
     """
-    Continuously capture frames from each camera.
-    Always update latest_frames for display.
-    Enqueue frames for saving only if recording_event is set.
+    Continuously capture frames from each camera, show them asynchronously,
+    and add (frame index, timestamp, camera index, frame data) to the frames_queue
+    only when recording_event is set.
     """
     frame_index = 0
     while not stop_event.is_set():
@@ -110,19 +111,37 @@ def frame_capture_loop(pipelines, stop_event, recording_event, frames_queue, lat
             if not color_frame:
                 continue
 
-            # Get the frame and timestamp
-            timestamp = color_frame.get_timestamp() / 1000.0  # convert to seconds
+            # Get timestamp and convert frame to numpy array.
+            timestamp = color_frame.get_timestamp()
             color_image = np.asanyarray(color_frame.get_data())
-            
-            # Update the latest frame for this camera (make a copy to be safe)
-            latest_frames[cam_idx] = color_image.copy()
-            
-            # If recording, add the frame to the recording queue
+
+            # Display the frame (asynchronous visualization)
+            cv2.imshow("Recording", color_image)
+            key = cv2.waitKey(1) & 0xFF
+
+            # Control key events:
+            # SPACE key starts recording (if not already recording).
+            if key == 32:
+                if not recording_event.is_set():
+                    print("Recording started...")
+                    # Clear the frames_queue for a fresh recording session.
+                    while not frames_queue.empty():
+                        frames_queue.get()
+                    recording_event.set()
+            # ESC key stops recording if active, or stops the loop if not recording.
+            elif key == 27:
+                if recording_event.is_set():
+                    print("Recording stopped.")
+                    recording_event.clear()
+                else:
+                    print("Exiting frame capture loop.")
+                    stop_event.set()
+                    break
+
+            # If recording is active, add the frame and metadata to the queue.
             if recording_event.is_set():
                 frames_queue.put((frame_index, timestamp, cam_idx, color_image))
                 frame_index += 1
-        # Adjust sleep to your desired frame rate
-        time.sleep(0.01)
 
 def save_frames_and_metadata(frames_queue, traj_no):
     """
@@ -199,7 +218,7 @@ def control_loop_open(leader_controller, follower_controller, stop_event):
         time.sleep(0.005)
 
 # Function to record a single trajectory
-def record_traj(pipelines, controllers, frames_queue, joint_states_queue):
+def record_traj(pipelines, controllers):
     """
     Continuously record frames from each camera pipeline into frames_queue.
     Press ESC to stop recording.
@@ -253,174 +272,92 @@ def record_traj(pipelines, controllers, frames_queue, joint_states_queue):
             stop_event.set()
             break
 
-        time.sleep(0.1)
-
-def display_loop(latest_frames, stop_event, recording_event):
-    """
-    Continuously build a composite display from the latest frames.
-    For 4 cameras, arrange them in a 2x2 grid.
-    """
-    while not stop_event.is_set():
-        frames = []
-        # For four cameras, use a default blank image if no frame is available.
-        for i in range(4):
-            if i in latest_frames:
-                frame = latest_frames[i]
-                # Convert from BGRA to BGR if necessary
-                if frame.shape[2] == 4:
-                    frame = cv2.cvtColor(frame, cv2.COLOR_BGRA2BGR)
-            else:
-                frame = np.zeros((480, 848, 3), dtype=np.uint8)
-            frames.append(frame)
-
-        # Arrange the 4 frames into a 2x2 grid
-        row1 = cv2.hconcat([frames[0], frames[1]])
-        row2 = cv2.hconcat([frames[2], frames[3]])
-        composite = cv2.vconcat([row1, row2])
-        cv2.imshow("Camera Views", composite)
-        key = cv2.waitKey(1) & 0xFF
-        if key == 32:  # SPACE: toggle recording
-            if recording_event.is_set():
-                print("Recording stopped...")
-                recording_event.clear()
-            else:
-                print("Recording started...")
-                recording_event.set()
-        elif key == 27:  # ESC: exit
-            stop_event.set()
-            break
-
-    cv2.destroyAllWindows()
+        time.sleep(0.005)
 
 def main():
-    config_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'teleop_config.json')
-    config = load_robot_config(config_path)
+    
+    config = load_robot_config(os.path.join(os.path.dirname(os.path.abspath(__file__)), 'teleop_config.json'))
     controllers = initialize_controllers(config)
-    pipelines = initialize_cameras(config)
+    # pipelines = initialize_cameras(config)
 
-    def handle_sigint(sig, frame):
-        stop_event.set()
-        print("Interrupted by user, stopping...")
-
-    signal.signal(signal.SIGINT, handle_sigint)
-
-    # Queues and shared dict for frames and joint states
     frames_queue = queue.Queue()
-    latest_frames = {}  # Shared dict to hold the latest frame per camera
+    leader_joint_states_queue = queue.Queue()
+    follower_joint_states_queue = queue.Queue()
 
-    # Define events for thread stopping and recording control
     stop_event = threading.Event()
     recording_event = threading.Event()
+    polling_threads = []
 
-    # Start frame capture thread (always running)
-    frame_thread = threading.Thread(
-        target=frame_capture_loop,
-        args=(pipelines, stop_event, recording_event, frames_queue, latest_frames)
-    )
-    frame_thread.start()
+    # Create OpenCV window
+    # cv2.namedWindow('Recording', cv2.WINDOW_AUTOSIZE)
 
-    # Start the display loop in a separate thread (or directly in main)
-    # display_thread = threading.Thread(
-    #     target=display_loop,
-    #     args=(latest_frames, stop_event, recording_event)
+    # frame_thread = threading.Thread(
+    #     target=frame_capture_loop,
+    #     args=(pipelines, stop_event, recording_event, frames_queue)
     # )
-    # display_thread.start()
+    # frame_thread.start()
 
-    #Start joint state polling and control threads here
     joint_state_threads = []
-    control_threads = []
-    control_stop_events = []
-    for leader, follower in controllers:
-        joint_states_queue = queue.Queue()
-        joint_state_thread = threading.Thread(
+    for leader_controller, follower_controller in controllers:
+        t_leader = threading.Thread(
             target=poll_joint_states,
-            args=(leader, joint_states_queue, stop_event, recording_event)
+            args=(leader_controller, leader_joint_states_queue, stop_event, recording_event, 0.01)
         )
-        joint_state_thread.start()
-        joint_state_threads.append(joint_state_thread)
-        if 
-
-        control_stop_event = threading.Event()
-        control_stop_events.append(control_stop_event)
-        control_thread = threading.Thread(
+        t_follower = threading.Thread(
+            target=poll_joint_states,
+            args=(follower_controller, follower_joint_states_queue, stop_event, recording_event, 0.01)
+        )
+        t_leader.start()
+        t_follower.start()
+        joint_state_threads.extend([t_leader, t_follower])
+    
+    control_stop_events = []
+    control_threads = []
+    for leader_controller, follower_controller in controllers:
+        ctrl_stop_event = threading.Event()
+        control_stop_events.append(ctrl_stop_event)
+        t = threading.Thread(
             target=control_loop_open,
-            args=(leader, follower, control_stop_event)
+            args=(leader_controller, follower_controller, ctrl_stop_event)
         )
-        control_thread.start()
-        control_threads.append(control_thread)
+        t.start()
+        control_threads.append(t)
 
     try:
-        cv2.namedWindow("Camera Views", cv2.WINDOW_NORMAL)
         while not stop_event.is_set():
-            # Continuously build a composite display from the latest frames.
-            frames = []
-            # For four cameras, use a default blank image if no frame is available.
-            for i in range(4):
-                if i in latest_frames:
-                    frame = latest_frames[i]
-                    # Convert from BGRA to BGR if necessary
-                    if frame.shape[2] == 4:
-                        frame = cv2.cvtColor(frame, cv2.COLOR_BGRA2BGR)
-                else:
-                    frame = np.zeros((480, 848, 3), dtype=np.uint8)
-                frames.append(frame)
-
-            # Arrange the 4 frames into a 2x2 grid
-            row1 = cv2.hconcat([frames[0], frames[1]])
-            row2 = cv2.hconcat([frames[3], frames[2]])
-            composite = cv2.vconcat([row1, row2])
-            cv2.putText(composite, "top_vew", (0, 480), cv2.FONT_HERSHEY_SIMPLEX, 1.2, (255, 255, 255), 2)
-            cv2.putText(composite, "45_deg_view", (848, 480), cv2.FONT_HERSHEY_SIMPLEX, 1.2, (255, 255, 255), 2)
-            cv2.putText(composite, "wrist_left", (0, 960), cv2.FONT_HERSHEY_SIMPLEX, 1.2, (255, 255, 255), 2)
-            cv2.putText(composite, "wrist_right", (848, 960), cv2.FONT_HERSHEY_SIMPLEX, 1.2, (255, 255, 255), 2)
-
-            cv2.imshow("Camera Views", composite)
-            key = cv2.waitKey(1) & 0xFF
-            if key == 32:  # SPACE: toggle recording
-                if recording_event.is_set():
-                    print("Recording stopped...")
-                    recording_event.clear()
-                else:
-                    print("Recording started...")
-                    recording_event.set()
-            elif key == 27:  # ESC: exit
-                stop_event.set()
-                break
-
-            # After recording stops, process the queued frames.
-            # For example, if recording just ended (recording_event cleared) and there is data:
-            if (not recording_event.is_set() and not frames_queue.empty()):
-                print("Recording session ended. Press 's' to save or any other key to discard.")
+            # When recording stops and data is in any queue, prompt the user.
+            if (not recording_event.is_set() and 
+                (not frames_queue.empty() or not leader_joint_states_queue.empty() or not follower_joint_states_queue.empty())):
+                print("Recording session ended.")
+                print("Press 's' to save the recording, or any other key to discard.")
                 key = cv2.waitKey(0) & 0xFF
-                traj_no = get_next_traj_folder("observations")
+                traj_no = get_next_traj_folder()
                 if key == ord('s'):
+                    # Save frames and metadata.
                     save_frames_and_metadata(frames_queue, traj_no)
-                    # Similarly, save joint state data if applicable.
+                    # Save leader joint states.
+                    leader_dir = os.path.join("observations", f"traj_{traj_no}", "leader_joint_states")
+                    save_joint_states(leader_joint_states_queue, leader_dir)
+                    # Save follower joint states.
+                    follower_dir = os.path.join("actions", f"traj_{traj_no}", "follower_joint_states")
+                    save_joint_states(follower_joint_states_queue, follower_dir)
                     print(f"Recording saved as trajectory {traj_no}.")
                 else:
-                    # Clear frames_queue if discarded
+                    # Clear all queues.
                     while not frames_queue.empty():
                         frames_queue.get()
+                    while not leader_joint_states_queue.empty():
+                        leader_joint_states_queue.get()
+                    while not follower_joint_states_queue.empty():
+                        follower_joint_states_queue.get()
                     print("Recording discarded.")
             time.sleep(0.1)
-
     except KeyboardInterrupt:
         print("Interrupted by user, stopping...")
     finally:
-        for pipeline in pipelines:
-            pipeline.stop()
         stop_event.set()
-        # display_thread.join()
-        cv2.destroyAllWindows()
         recording_event.clear()
-        frame_thread.join()
-
-        for leader, follower in controllers:
-            leader.set_to_damping()
-            follower.set_to_damping()
-            leader.reset_to_home()
-            follower.reset_to_home()
-
+        # frame_thread.join()
         for t in joint_state_threads:
             t.join()
         for ev in control_stop_events:
@@ -428,6 +365,13 @@ def main():
         for t in control_threads:
             t.join()
 
+        for leader, follower in controllers:
+            leader.set_to_damping()
+            follower.set_to_damping()
+            leader.reset_to_home()
+            follower.reset_to_home()
+
+        # cv2.destroyAllWindows()
 
 if __name__ == "__main__":
     main()
