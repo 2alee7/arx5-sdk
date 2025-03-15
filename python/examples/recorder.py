@@ -14,11 +14,19 @@ import queue
 import signal
 import argparse
 
-from arx5_interface import Arx5CartesianController, Gain, LogLevel
 
 ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.append(ROOT_DIR)
 os.chdir(ROOT_DIR)
+
+from arx5_interface import Arx5CartesianController, Gain, LogLevel
+
+parser = argparse.ArgumentParser(description= "Specify single side, robot or controller")
+parser.add_argument("--right", action="store_true", help="Specify right side robot")
+parser.add_argument("--left", action="store_true", help="Specify left side robot")
+parser.add_argument("--robot", type=int, help="Identical robot teleoperation")
+parser.add_argument("--controller", type=int, help="Lightweight controller teleoperation")
+args = parser.parse_args()
 
 def load_robot_config(config_path):
     with open(config_path, 'r') as file:
@@ -181,19 +189,32 @@ def get_next_traj_folder(base_path):
     return os.path.join(base_path, f"traj_{index}")
 
 # Control loop function
-def control_loop_open(leader_controller, follower_controller, stop_event):
+def control_loop_open(leader_controller, follower_controller, stop_event, robot = True):
     while not stop_event.is_set():
-        try:
-            # Collect EEFState from leader controller
-            leader_eef_state = leader_controller.get_eef_state()
-            follower_cmd = leader_eef_state
-            follower_cmd.gripper_pos *= 4.8
-            follower_cmd.timestamp = 0.0
+        if robot:
+            try:
+                # Collect EEFState from leader controller
+                leader_eef_state = leader_controller.get_eef_state()
+                follower_cmd = leader_eef_state
+                follower_cmd.gripper_pos *= 4.8
+                follower_cmd.timestamp = 0.0
 
-            # Set EEFState to follower controller
-            follower_controller.set_eef_cmd(follower_cmd)
-        except Exception as e:
-            print(f"Error in control loop: {e}")
+            except Exception as e:
+                print(f"Error in control loop: {e}")
+
+        else:
+            try:
+                # Collect EEFState from leader controller #TODO: Implement lightweight controller
+                leader_eef_state = leader_controller.get_eef_state()
+                follower_cmd = leader_eef_state
+                follower_cmd.gripper_pos *= 4.8
+                follower_cmd.timestamp = 0.0
+
+            except Exception as e:
+                print(f"Error in control loop: {e}")
+
+        # Set EEFState to follower controller
+        follower_controller.set_eef_cmd(follower_cmd)
 
         # Sleep to achieve 100Hz loop
         time.sleep(0.005)
@@ -332,13 +353,19 @@ def main():
     control_stop_events = []
     for leader, follower in controllers:
         joint_states_queue = queue.Queue()
-        joint_state_thread = threading.Thread(
+        leader_state_thread = threading.Thread(
             target=poll_joint_states,
             args=(leader, joint_states_queue, stop_event, recording_event)
         )
-        joint_state_thread.start()
-        joint_state_threads.append(joint_state_thread)
-        if 
+        leader_state_thread.start()
+        joint_state_threads.append(leader_state_thread)
+
+        follower_state_thread = threading.Thread(
+            target=poll_joint_states,
+            args=(follower, joint_states_queue, stop_event, recording_event)
+        )
+        follower_state_thread.start()
+        joint_state_threads.append(follower_state_thread)
 
         control_stop_event = threading.Event()
         control_stop_events.append(control_stop_event)
