@@ -616,7 +616,14 @@ void Arx5CartesianController::_calc_joint_cmd()
             _enter_emergency_state();
         }
 
-        ik_results = _solver->inverse_kinematics(_output_eef_cmd.pose_6d, joint_state.pos);
+        try
+        {
+            ik_results = _solver->inverse_kinematics(_output_eef_cmd.pose_6d, joint_state.pos);
+        }
+        catch (const std::exception &e)
+        {
+            return;
+        }
         joint_cmd.gripper_pos = _output_eef_cmd.gripper_pos;
     }
     bool success = std::get<0>(ik_results);

@@ -14,7 +14,6 @@ import queue
 import signal
 import argparse
 
-
 ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.append(ROOT_DIR)
 os.chdir(ROOT_DIR)
@@ -48,18 +47,6 @@ def initialize_controllers(config, side=None):
             pair['follower']['interface_name'],
             urdf_path,
         )
-        gain = Gain(
-            leader.get_controller_config().default_kp / 10000,
-            leader.get_controller_config().default_kd / 1000,
-            0.0,
-            0.0
-        )
-        
-        leader.set_log_level(LogLevel.WARNING)
-        follower.set_log_level(LogLevel.WARNING)
-        leader.reset_to_home()
-        follower.reset_to_home()
-        leader.set_gain(gain)  # Set reduced damping coeffs. to leader only
         controllers.append((leader, follower))
 
     if side:
@@ -73,6 +60,19 @@ def initialize_controllers(config, side=None):
         # Initialize all robot pairs
         for pair in config['robot_pairs']:
             create_controller_pair(pair)
+
+    for pair in controllers:
+        for controller in pair:
+            controller.set_log_level(LogLevel.WARNING)
+            controller.reset_to_home()
+        
+        gain = Gain(
+            pair[0].get_controller_config().default_kp * 0,
+            pair[0].get_controller_config().default_kd * 0,
+            0.0,
+            0.0
+        )
+        pair[0].set_gain(gain)  # Set reduced damping coeffs. to leader only
 
     return controllers
 
@@ -190,6 +190,7 @@ def get_next_traj_folder(base_path):
 
 # Control loop function
 def control_loop_open(leader_controller, follower_controller, stop_event, robot = True):
+    """ 'IK Failed' error can be ignored safely."""
     while not stop_event.is_set():
         if robot:
             try:
@@ -219,100 +220,6 @@ def control_loop_open(leader_controller, follower_controller, stop_event, robot 
         # Sleep to achieve 100Hz loop
         time.sleep(0.005)
 
-# Function to record a single trajectory
-def record_traj(pipelines, controllers, frames_queue, joint_states_queue):
-    """
-    Continuously record frames from each camera pipeline into frames_queue.
-    Press ESC to stop recording.
-    """
-    frames_queue.clear()
-    joint_states_queue.clear()
-
-    polling_threads = []
-    stop_event = threading.Event()
-
-    # Start joint state polling threads for each controller
-    for leader_controller, follower_controller in controllers:
-        leader_joint_thread = threading.Thread(
-            target=poll_joint_states,
-            args=(leader_controller, joint_states_queue, stop_event)
-        )
-        follower_joint_thread = threading.Thread(
-            target=poll_joint_states,
-            args=(follower_controller, joint_states_queue, stop_event)
-        )
-        leader_joint_thread.start()
-        follower_joint_thread.start()
-        polling_threads.extend([leader_joint_thread, follower_joint_thread])
-
-    print("Recording started. Press ESC to stop.")
-
-    while True:
-        color_image = None
-
-        for idx, pipeline in enumerate(pipelines):
-            frames = pipeline.wait_for_frames()
-            color_frame = frames.get_color_frame()
-            if not color_frame:
-                continue
-
-            # Convert device timestamp (ms) to seconds
-            # timestamp = color_frame.get_timestamp() / 1000.0
-            timestamp = color_frame.get_timestamp()
-            color_image = np.asanyarray(color_frame.get_data())
-
-            # Store (timestamp, camera_idx, color_image) in frames_queue
-            frames_queue.append((timestamp, idx, color_image))
-
-        # Display the last captured frame from any camera
-        if color_image is not None:
-            cv2.imshow("Recording", color_image)
-
-        key = cv2.waitKey(5)
-        if key == 27:  # ESC
-            print("Recording stopped.")
-            stop_event.set()
-            break
-
-        time.sleep(0.1)
-
-def display_loop(latest_frames, stop_event, recording_event):
-    """
-    Continuously build a composite display from the latest frames.
-    For 4 cameras, arrange them in a 2x2 grid.
-    """
-    while not stop_event.is_set():
-        frames = []
-        # For four cameras, use a default blank image if no frame is available.
-        for i in range(4):
-            if i in latest_frames:
-                frame = latest_frames[i]
-                # Convert from BGRA to BGR if necessary
-                if frame.shape[2] == 4:
-                    frame = cv2.cvtColor(frame, cv2.COLOR_BGRA2BGR)
-            else:
-                frame = np.zeros((480, 848, 3), dtype=np.uint8)
-            frames.append(frame)
-
-        # Arrange the 4 frames into a 2x2 grid
-        row1 = cv2.hconcat([frames[0], frames[1]])
-        row2 = cv2.hconcat([frames[2], frames[3]])
-        composite = cv2.vconcat([row1, row2])
-        cv2.imshow("Camera Views", composite)
-        key = cv2.waitKey(1) & 0xFF
-        if key == 32:  # SPACE: toggle recording
-            if recording_event.is_set():
-                print("Recording stopped...")
-                recording_event.clear()
-            else:
-                print("Recording started...")
-                recording_event.set()
-        elif key == 27:  # ESC: exit
-            stop_event.set()
-            break
-
-    cv2.destroyAllWindows()
-
 def main():
     config_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'teleop_config.json')
     config = load_robot_config(config_path)
@@ -339,13 +246,6 @@ def main():
         args=(pipelines, stop_event, recording_event, frames_queue, latest_frames)
     )
     frame_thread.start()
-
-    # Start the display loop in a separate thread (or directly in main)
-    # display_thread = threading.Thread(
-    #     target=display_loop,
-    #     args=(latest_frames, stop_event, recording_event)
-    # )
-    # display_thread.start()
 
     #Start joint state polling and control threads here
     joint_state_threads = []
