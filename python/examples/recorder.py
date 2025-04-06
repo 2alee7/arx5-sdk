@@ -102,7 +102,7 @@ def poll_joint_states(controller, joint_states_queue, stop_event, recording_even
             timestamp = controller.get_timestamp()
             state = controller.get_joint_state()
             joint_states_queue.put((timestamp, state))
-        time.sleep(rate)
+        asyncio.sleep(rate)
 
 def frame_capture_loop(pipelines, stop_event, recording_event, frames_queue, latest_frames):
     """
@@ -130,7 +130,7 @@ def frame_capture_loop(pipelines, stop_event, recording_event, frames_queue, lat
                 frames_queue.put((frame_index, timestamp, cam_idx, color_image))
                 frame_index += 1
         # Adjust sleep to your desired frame rate
-        time.sleep(0.01)
+        asyncio.sleep(0.01)
 
 def save_frames_and_metadata(frames_queue, traj_no):
     """
