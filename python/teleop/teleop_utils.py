@@ -60,24 +60,6 @@ def initialize_controllers(config, side=None):
 
     return controllers
 
-def initialize_cameras(config):
-    pipelines = []
-
-    def init_camera_pipeline(serial_no):
-        pipeline = rs.pipeline()
-        cfg = rs.config()
-        print("Enabling camera with serial number:", serial_no)
-        cfg.enable_device(serial_no)
-        cfg.enable_stream(rs.stream.color, 848, 480, rs.format.bgra8, 30)
-        pipeline.start(cfg)
-        pipelines.append(pipeline)
-
-    for cam in config['cameras']:
-        print("Initializing camera", cam['name'], "with serial number:", cam['serial'])
-        init_camera_pipeline(cam['serial'])
-
-    return pipelines
-
 def poll_joint_states(controller, joint_states_queue, stop_event, recording_event, rate=0.001):
     while not stop_event.is_set():
         if recording_event.is_set():

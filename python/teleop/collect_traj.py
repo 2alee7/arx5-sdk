@@ -1,5 +1,3 @@
-# main.py
-
 import os
 import sys
 import threading
@@ -9,10 +7,10 @@ import signal
 import argparse
 import numpy as np
 import cv2
+from realsense_driver import init_synced_cameras
 
-from teleop_utils import (load_robot_config, initialize_controllers, initialize_cameras,
-    poll_joint_states, frame_capture_loop, save_frames_and_metadata,
-    save_joint_states, get_next_traj_folder, control_loop_open)
+from teleop_utils import (load_robot_config, initialize_controllers,
+    poll_joint_states, save_frames_and_metadata, get_next_traj_folder, control_loop_open)
 
 ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.append(ROOT_DIR)
@@ -28,7 +26,7 @@ args = parser.parse_args()
 def main():
     config = load_robot_config(os.path.join(os.path.dirname(os.path.abspath(__file__)), 'arx5_config.json'))
     controllers = initialize_controllers(config, side='right' if args.right else 'left' if args.left else None)
-    pipelines = initialize_cameras(config)
+    # pipelines = initialize_cameras(config)
 
     stop_event = threading.Event()
     recording_event = threading.Event()
@@ -40,12 +38,6 @@ def main():
         print("Interrupted by user, stopping...")
 
     signal.signal(signal.SIGINT, handle_sigint)
-
-    frame_thread = threading.Thread(
-        target=frame_capture_loop,
-        args=(pipelines, stop_event, recording_event, frames_queue, latest_frames)
-    )
-    frame_thread.start()
 
     joint_state_threads = []
     control_threads = []
@@ -118,13 +110,10 @@ def main():
             time.sleep(0.1)
 
     finally:
-        for pipeline in pipelines:
-            pipeline.stop()
 
         stop_event.set()
         cv2.destroyAllWindows()
         recording_event.clear()
-        frame_thread.join()
 
         for leader, follower in controllers:
             leader.set_to_damping()

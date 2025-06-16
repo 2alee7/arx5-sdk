@@ -44,5 +44,10 @@
             "name": "wrist_left_view",
             "serial": "130322271932"
         }
+    ],
+    "misc": [
+        {
+            "timesteps": "1000"
+        }
     ]
 }
