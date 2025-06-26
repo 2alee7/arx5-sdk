@@ -3,36 +3,50 @@ from collections import deque
 import pyrealsense2 as rs
 import numpy as np
 import time
+from shared_memory.shared_memory_ring_buffer import SharedMemoryRingBuffer
 
 class CamWorker(threading.Thread):
-    # Worker thread to capture frames from a single RealSense D405
-    def __init__(self, serial, cfg, buffer, lock):
+    def __init__(self, serial, cfg, buffer: SharedMemoryRingBuffer, lock: threading.Lock, recording_event: threading.Event):
         super().__init__(daemon=True)
         self.serial = serial
-        self.cfg = cfg
+        self.cfg    = cfg
         self.buffer = buffer
-        self.lock = lock
+        self.lock   = lock
+        self.rec    = recording_event
         self.pipeline = rs.pipeline()
-        self.running = True
+        self.running  = True
+        # self.init_rec_ts = None # timestamp when recording starts, resets to None when recording stops
 
     def run(self):
+        # start once, run pipeline until shutdown
         self.pipeline.start(self.cfg)
         while self.running:
             frames = self.pipeline.wait_for_frames()
-            color_frame = frames.get_color_frame()
-            if not color_frame:
+            color  = frames.get_color_frame()
+            if not color:
                 continue
-            timestamp = color_frame.get_timestamp() / 1000.0  # seconds
-            color_image = np.asanyarray(color_frame.get_data())
+
+            ts  = color.get_timestamp() / 1000.0
+            img = np.asanyarray(color.get_data())
+
             with self.lock:
-                self.buffer.append((timestamp, color_image))
+                if self.rec.is_set():   # recording: record initial timestamp, enqueue frames into buffer
+                    
+                    # if self.init_rec_ts is None: TODO: necessary?
+                    #     self.init_rec_ts = ts
+
+                    self.buffer.append((ts, img))
+                
+                else:
+                    self.buffer.clear() # not recording: discard any old frames
+        
+        self.pipeline.stop()    # stop pipeline only when thread is torn down
 
     def stop(self):
         self.running = False
-        self.pipeline.stop()
 
 class FrameSynchronizer:
-    def __init__(self, buffers, locks, tolerance=0.005):
+    def __init__(self, buffers, locks, tolerance=0.00833):  # 8.33 ms for 60 fps, 16.67 ms for 30 fps
         self.buffers = buffers
         self.locks = locks
         self.tolerance = tolerance  # in seconds
@@ -62,7 +76,7 @@ class FrameSynchronizer:
                             self.buffers[i].popleft()
             time.sleep(0.001)
 
-def init_synced_cameras(config, resolution=(848, 480), fps=30):
+def init_synced_cameras(config, resolution=(848, 480), fps=60):
     buffers = []
     locks = []
     workers = []

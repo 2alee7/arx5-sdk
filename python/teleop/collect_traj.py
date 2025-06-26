@@ -7,10 +7,9 @@ import signal
 import argparse
 import numpy as np
 import cv2
-from realsense_driver import init_synced_cameras
-
-from teleop_utils import (load_robot_config, initialize_controllers,
-    poll_joint_states, save_frames_and_metadata, get_next_traj_folder, control_loop_open)
+from teleop.realsense_utils import init_synced_cameras
+from teleop_utils import (load_robot_config, initialize_controllers, poll_joint_states, save_frames_and_metadata, get_next_traj_folder)
+from control_loops import control_loop_open
 
 ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.append(ROOT_DIR)

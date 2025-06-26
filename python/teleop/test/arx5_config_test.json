@@ -1,0 +1,53 @@
+{
+    "robot_pairs": [
+        {
+            "side": "right",
+            "leader": {
+                "name": "leader_right",
+                "model": "L5",
+                "interface_name": "can0"
+            },
+            "follower": {
+                "name": "follower_right",
+                "model": "L5",
+                "interface_name": "can1"
+            }
+        },
+        {
+            "side": "left",
+            "leader": {
+                "name": "leader_left",
+                "model": "L5",
+                "interface_name": "can2"
+            },
+            "follower": {
+                "name": "follower_left",
+                "model": "L5",
+                "interface_name": "can3"
+            }
+        }
+    ],
+    "cameras": [
+        {
+            "name": "top_view",
+            "serial": "218622274589"
+        },
+        {
+            "name": "45_deg_view",
+            "serial": "218622278179"
+        },
+        {
+            "name": "wrist_right_view",
+            "serial": "130322272673"
+        },
+        {
+            "name": "wrist_left_view",
+            "serial": "130322271932"
+        }
+    ],
+    "misc": [
+        {
+            "timesteps": "1000"
+        }
+    ]
+}

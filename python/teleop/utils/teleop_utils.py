@@ -9,7 +9,7 @@ import pyrealsense2 as rs
 import cv2
 import time
 
-ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+ROOT_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.append(ROOT_DIR)
 os.chdir(ROOT_DIR)
 
@@ -128,15 +128,3 @@ def get_next_traj_folder(base_path):
     while os.path.exists(os.path.join(base_path, f"traj_{index}")):
         index += 1
     return f"traj_{index}"
-
-def control_loop_open(leader_controller, follower_controller, stop_event, robot=True):
-    while not stop_event.is_set():
-        try:
-            leader_eef_state = leader_controller.get_eef_state()
-            follower_cmd = leader_eef_state
-            follower_cmd.gripper_pos *= 4.8
-            follower_cmd.timestamp = 0.0
-            follower_controller.set_eef_cmd(follower_cmd)
-        except Exception as e:
-            print(f"Error in control loop: {e}")
-        time.sleep(0.02)

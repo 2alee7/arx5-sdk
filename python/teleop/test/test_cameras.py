@@ -6,6 +6,9 @@ import statistics
 from collections import deque
 import bisect
 import pyrealsense2 as rs
+import sys
+
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 # Import robot config loader
 from teleop_utils import load_robot_config
@@ -139,7 +142,7 @@ def main():
     args = parser.parse_args()
 
     base_dir = os.path.dirname(os.path.abspath(__file__))
-    config_path = os.path.join(base_dir, 'arx5_config.json')
+    config_path = os.path.join(base_dir, 'arx5_config_test.json')
     config = load_robot_config(config_path)
     serials = [cam['serial'] for cam in config['cameras']]
     print(f"Using camera serials from config: {serials}")
