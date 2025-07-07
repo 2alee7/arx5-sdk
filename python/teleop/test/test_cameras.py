@@ -2,18 +2,34 @@ import time
 import threading
 import argparse
 import os
-import statistics
 from collections import deque
-import bisect
 import pyrealsense2 as rs
 import sys
+import numpy as np
+import cv2
+from multiprocessing.managers import SharedMemoryManager
+from pynput import keyboard
+import signal
 
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+# Add python directory to path
+ROOT_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+sys.path.append(ROOT_DIR)
+os.chdir(ROOT_DIR)
 
-# Import robot config loader
-from teleop_utils import load_robot_config
+from teleop.utils.teleop_utils import load_robot_config
+from shared_memory.shared_memory_ring_buffer import SharedMemoryRingBuffer
+from shared_memory.shared_memory_util import ArraySpec
 
-# --- Camera Worker & Synchronizer ---
+# Frame sync parameters
+FRAME_PERIOD = 1.0 / 60.0
+SYNC_TOLERANCE = FRAME_PERIOD / 2 # +/- 8.33ms tolerance @ 60FPS
+
+buffers = {}
+locks = {}
+recording_event = threading.Event()
+stop_event = threading.Event()
+
+
 class CameraWorker(threading.Thread):
     def __init__(self, serial, cfg, buffer, lock):
         super().__init__(daemon=True)
@@ -27,7 +43,7 @@ class CameraWorker(threading.Thread):
 
     def run(self):
         self.pipeline.start(self.cfg)
-        while self.running:
+        while self.running and not stop_event.is_set():
             frames = self.pipeline.wait_for_frames(timeout_ms=5000)
             color = frames.get_color_frame()
             if not color:
@@ -37,138 +53,189 @@ class CameraWorker(threading.Thread):
                 self.init_ts = ts
             rel_ts = ts - self.init_ts
             with self.lock:
-                # maintain sorted buffer for bisect searches
-                self.buffer.append(rel_ts)
+                self.buffer.append((rel_ts, color))
 
     def stop(self):
         self.running = False
         self.pipeline.stop()
 
-class FrameSynchronizer:
-    def __init__(self, buffers, locks, tol):
-        self.buffers = buffers
-        self.locks = locks
-        self.tol = tol
 
-    def next_synced(self):
-        while True:
-            ts_list = []
-            for buf, lk in zip(self.buffers, self.locks):
-                with lk:
-                    if not buf:
-                        break
-                    ts_list.append(buf[0])
-            else:
-                min_ts, max_ts = min(ts_list), max(ts_list)
-                if max_ts - min_ts <= self.tol:
-                    synced = []
-                    for buf, lk in zip(self.buffers, self.locks):
-                        with lk:
-                            synced.append(buf.popleft())
-                    return synced
-                # drop oldest frame(s)
-                for i, t in enumerate(ts_list):
-                    if t == min_ts:
-                        with self.locks[i]:
-                            self.buffers[i].popleft()
+def sample_within(cam_id, t_n, delta):
+    # Sample a frame from the buffer for the given camera ID about target time t_n
+    with locks[cam_id]:
+        buf = list(buffers[cam_id])
+    best = min(buf, key=lambda x: abs(x[0] - t_n), default=None)
+    if best and abs(best[0] - t_n) <= delta:
+        return best[1]
+    return None
+
+def sync_loop(cam_ids, t0, sync_buffer):
+    n = 0
+    while not stop_event.is_set():
+        t_n = t0 + n * FRAME_PERIOD
+        sleep = t_n - time.monotonic()
+        if sleep > 0:
+            time.sleep(sleep)
+        else:
+            t_n = time.monotonic()
+
+        frameset = []
+        for cam in cam_ids:
+            frame = sample_within(cam, t_n, SYNC_TOLERANCE)
+            if frame is None:
+                break
+            frame_data = frame.get_data()
+            img = np.asanyarray(frame_data)
+            frameset.append(img)
+        
+        if len(frameset) == len(cam_ids):
+            # Convert frames to dictionary for SharedMemoryRingBuffer
+            data = {
+                'timestamp': t_n,
+                'frames': np.stack(frameset)  # Stack all frames into one array
+            }
+            try:
+                sync_buffer.put(data)
+                n += 1
+            except TimeoutError as e:
+                print(f"Put too fast: {e}")
+        else:
             time.sleep(0.001)
 
-# --- Test Procedures ---
-
-def init_workers(serials, width, height, fps):
-    buffers, locks, workers = [], [], []
-    for s in serials:
-        cfg = rs.config()
-        cfg.enable_device(s)
-        cfg.enable_stream(rs.stream.color, width, height, rs.format.bgr8, fps)
-        buf = deque()
-        lk = threading.Lock()
-        w = CameraWorker(s, cfg, buf, lk)
-        workers.append(w)
-        buffers.append(buf)
-        locks.append(lk)
-        w.start()
-    return workers, buffers, locks
-
-
-def test_option1(buffers, locks, tol):
-    # Use buffer 0 as reference
-    with locks[0]:
-        ref_ts = list(buffers[0])
-    success_count = 0
-    total = len(ref_ts)
-    # prepare sorted lists for others
-    other_ts = []
-    for buf, lk in zip(buffers[1:], locks[1:]):
-        with lk:
-            other_ts.append(sorted(buf))
-    # for each reference timestamp, check if each other camera has a timestamp within tol
-    for t in ref_ts:
-        found = True
-        for ts_list in other_ts:
-            # binary search
-            idx = bisect.bisect_left(ts_list, t)
-            match = False
-            for j in (idx-1, idx, idx+1):
-                if 0 <= j < len(ts_list) and abs(ts_list[j] - t) <= tol:
-                    match = True
-                    break
-            if not match:
-                found = False
-                break
-        if found:
-            success_count += 1
-    rate = success_count / total if total else 0
-    return total, success_count, rate
-
-
-def test_option2(sync, duration):
-    start = time.time()
+def recorder(episode_path, cam_ids, target_len, sync_buffer):
     count = 0
-    while time.time() - start < duration:
-        sync.next_synced()
-        count += 1
-    return count
+    while not stop_event.is_set():
+        if not recording_event.is_set():
+            time.sleep(0.1)
+            continue
+            
+        try:
+            # Get latest data from the buffer
+            data = sync_buffer.get_last_k(k=1)
+            if data is None:
+                time.sleep(0.01)
+                continue
+                
+            t_n = data['timestamp']
+            frames = data['frames']
+            
+            for i, frame in enumerate(frames):
+                cam_path = os.path.join(episode_path, f"view_{cam_ids[i]}")
+                os.makedirs(cam_path, exist_ok=True)
+                filepath = os.path.join(cam_path, f"{count:06d}.png")
+                cv2.imwrite(filepath, frame)
+            
+            count += 1
+            if count >= target_len:
+                recording_event.clear()
+                count = 0
+                
+        except Exception as e:
+            print(f"Error in recorder: {e}")
+            time.sleep(0.01)
+
+
+def on_press(key):
+    if key == keyboard.Key.space:
+        if recording_event.is_set():
+            recording_event.clear()
+            print("Recording paused")
+        else:
+            recording_event.set()
+            print("Recording started")
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Realsense Sync Test")
-    parser.add_argument('--option', choices=['1','2'], required=True)
-    parser.add_argument('--duration', type=float, default=20.0, help='Test duration in seconds')
-    parser.add_argument('--tol', type=float, default=0.05, help='Sync tolerance in seconds')
-    parser.add_argument('--width', type=int, default=848)
-    parser.add_argument('--height', type=int, default=480)
-    parser.add_argument('--fps', type=int, default=30)
+    parser = argparse.ArgumentParser("Master-sync timed robot control test")
+    parser.add_argument("--config", type=str, default="teleop/test/arx5_config_test.json")
     args = parser.parse_args()
 
-    base_dir = os.path.dirname(os.path.abspath(__file__))
-    config_path = os.path.join(base_dir, 'arx5_config_test.json')
-    config = load_robot_config(config_path)
-    serials = [cam['serial'] for cam in config['cameras']]
-    print(f"Using camera serials from config: {serials}")
+    config = load_robot_config(os.path.abspath(args.config))
 
-    workers, buffers, locks = init_workers(serials, args.width, args.height, args.fps)
+    serials = [cam['serial'] for cam in config['cameras']]   
+    width, height, fps = 640, 480, 60
+    cam_ids = list(range(len(serials)))
 
-    print("Warming up for 5 seconds...")
-    time.sleep(5)
+    # Initialize shared memory manager
+    shm_mgr = SharedMemoryManager()
+    shm_mgr.start()
 
-    if args.option == '1':
-        print("Running Option 1: reference-based matching...")
-        time.sleep(args.duration)
-        total, success, rate = test_option1(buffers, locks, args.tol)
-        print(f"Total ref frames: {total}")
-        print(f"Fully aligned sets within {args.tol}s: {success}")
-        print(f"Alignment success rate: {rate*100:.2f}%")
-    else:
-        sync = FrameSynchronizer(buffers, locks, args.tol)
-        print("Running Option 2: synchronized capture on-the-fly...")
-        count = test_option2(sync, args.duration)
-        print(f"Aligned frame sets captured: {count}")
-        print(f"Average rate: {count/args.duration:.2f} sets/sec")
+    # Create example data for the shared buffer
+    example_frame = np.zeros((len(serials), height, width, 3), dtype=np.uint8)
+    example_data = {
+        'timestamp': 0.0,
+        'frames': example_frame
+    }
 
-    print("Stopping workers...")
+    # Create SharedMemoryRingBuffer
+    sync_buffer = SharedMemoryRingBuffer.create_from_examples(
+        shm_manager=shm_mgr,
+        examples=example_data,
+        get_max_k=10,           # Maximum number of frames to retrieve at once
+        get_time_budget=0.01,   # Maximum time for retrieval operations
+        put_desired_frequency=fps  # Target update frequency
+    )
+
+    workers = []
+    for i, s in enumerate(serials):
+        cfg = rs.config()
+        cfg.enable_device(s)
+        cfg.enable_stream(rs.stream.color, width, height, rs.format.bgr8, fps)
+        buf = deque(maxlen=10)
+        lk = threading.Lock()
+        buffers[i] = buf
+        locks[i] = lk
+        worker = CameraWorker(s, cfg, buf, lk)
+        worker.start()
+        workers.append(worker)
+
+    # Wait for all workers to emit their first frame
+    first_ts = {}
+    while len(first_ts) < len(workers):
+        for i in range(len(workers)):
+            with locks[i]:
+                if i not in first_ts and buffers[i]:
+                    first_ts[i] = buffers[i][0][0]
+        time.sleep(0.01)
+
+    t0 = max(first_ts.values())
+
+    # Start sync and recorder threads
+    sync_thread = threading.Thread(
+        target=sync_loop, 
+        args=(cam_ids, t0, sync_buffer), 
+        daemon=True
+    )
+    sync_thread.start()
+    
+    recorder_thread = threading.Thread(
+        target=recorder, 
+        args=("episode_data", cam_ids, 100, sync_buffer), 
+        daemon=True
+    )
+    recorder_thread.start()
+
+    # Start keyboard listener
+    listener = keyboard.Listener(on_press=on_press)
+    listener.daemon = True
+    listener.start()
+
+    # Setup signal handler
+    signal.signal(signal.SIGINT, lambda sig, frame: stop_event.set())
+    
+    print("Running. Press SPACE to start/stop recording, Ctrl-C to exit.")
+    try:
+        stop_event.wait()
+    except KeyboardInterrupt:
+        stop_event.set()
+    
+    print("Shutting down...")
     for w in workers:
         w.stop()
+    
+    # Clean up shared memory
+    shm_mgr.shutdown()
 
-if __name__ == '__main__':
+
+if __name__ == "__main__":
     main()
