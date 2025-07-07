@@ -4,25 +4,31 @@ import signal
 import threading
 import argparse
 from pynput import keyboard
+import time
 
 
 ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.append(ROOT_DIR)
 os.chdir(ROOT_DIR)
 
-from utils.teleop_utils import load_robot_config, initialize_controllers, poll_joint_states
+from utils.teleop_utils import load_robot_config, initialize_controllers
 from utils.control_loops import control_loop_open
 
 
-def control_loop_runner(leader, follower, stop_event, pause_event):
+def control_loop_runner(leader, follower, pause_event, stop_event):
     """
     Wraps control_loop_open to allow pausing/resuming via pause_event.
     """
     while not stop_event.is_set():
         if pause_event.is_set():
-            pause_event.wait(timeout=0.1)
+            time.sleep(0.1)  # Sleep while paused
             continue
-        control_loop_open(leader, follower, pause_event)
+
+        control_loop_open(leader, follower, pause_event, stop_event)
+
+        if stop_event.is_set():
+            print("Stopping control loop...")
+            break
 
 def main():
     parser = argparse.ArgumentParser("Minimal test for robot control loop with pause/resume")
@@ -78,8 +84,8 @@ def main():
             threads.append(t)
 
         ctl_thread = threading.Thread(
-            target=control_loop_runner,
-            args=(leader, follower, stop_event, pause_event),
+            target=control_loop_open,
+            args=(leader, follower, pause_event, stop_event),
         )
         ctl_thread.daemon = True
         ctl_thread.start()

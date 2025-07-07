@@ -7,9 +7,9 @@ import signal
 import argparse
 import numpy as np
 import cv2
-from teleop.realsense_utils import init_synced_cameras
-from teleop_utils import (load_robot_config, initialize_controllers, poll_joint_states, save_frames_and_metadata, get_next_traj_folder)
-from control_loops import control_loop_open
+from teleop.utils.realsense_utils import init_synced_cameras
+from teleop.utils.teleop_utils import (load_robot_config, initialize_controllers, poll_joint_states, save_frames_and_metadata, get_next_traj_folder)
+from teleop.utils.control_loops import control_loop_open
 
 ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.append(ROOT_DIR)
@@ -76,7 +76,7 @@ def main():
             row2 = cv2.hconcat([frames[3], frames[2]])
             composite = cv2.vconcat([row1, row2])
 
-            labels = ["top_vew", "45_deg_view", "wrist_left", "wrist_right"]
+            labels = ["top_vew", "front_view", "wrist_left", "wrist_right"]
             positions = [(0, 480), (848, 480), (0, 960), (848, 960)]
             for label, pos in zip(labels, positions):
                 cv2.putText(composite, label, pos, cv2.FONT_HERSHEY_SIMPLEX, 1.2, (255, 255, 255), 2)

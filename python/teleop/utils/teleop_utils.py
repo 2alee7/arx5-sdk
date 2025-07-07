@@ -46,15 +46,17 @@ def initialize_controllers(config, side=None):
         for pair in config['robot_pairs']:
             create_controller_pair(pair)
 
+    reset_all_to_home(controllers)
+
     for leader, follower in controllers:
-        for controller in (leader, follower):
-            controller.set_log_level(LogLevel.WARNING)
-            controller.reset_to_home()
+        # for controller in (leader, follower):
+        #     controller.set_log_level(LogLevel.WARNING)
+        #     controller.reset_to_home()
 
         gain = Gain(
-            leader.get_controller_config().default_kp * 0,
-            leader.get_controller_config().default_kd * 0,
-            0.0, 0.0
+            leader.get_controller_config().default_kp * 0.00001,
+            leader.get_controller_config().default_kd * 0.00001,
+            0.00001, 0.00001
         )
         leader.set_gain(gain)
 
@@ -85,6 +87,17 @@ def frame_capture_loop(pipelines, stop_event, recording_event, frames_queue, lat
                 frames_queue.put((frame_index, timestamp, cam_idx, color_image))
                 frame_index += 1
         time.sleep(0.01)
+
+def reset_all_to_home(controllers):
+    # Workaround for resetting all robots to home simultaneously. 
+    # Doesn't work at the moment because of background send/recv flag.
+    threads = []
+    for leader, follower in controllers:
+        for robot in (leader, follower):
+            # Create a thread for each robot's reset_to_home call
+            t = threading.Thread(target=robot.reset_to_home)
+            t.daemon = True
+            t.start()
 
 def save_frames_and_metadata(frames_queue, traj_path):
     base_obs = "observations"
