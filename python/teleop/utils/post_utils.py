@@ -8,7 +8,7 @@ import tensorflow_datasets as tfds
 import numpy as np
 import threading
 
-# Functions to pre-process teleop data for fine-tuning
+# Functions to pre-process teleop data
 
 def resize_images(images, target_size=(256, 256)):
     resized_images = []
@@ -22,11 +22,6 @@ def array_to_hdf5(array, hdf5_file, episode_name):
         if episode_name in f:
             del f[episode_name]  # Remove existing dataset
         f.create_dataset(episode_name, data=array, compression='gzip')
-
-def hdf5_to_tfds(hdf5_file, episode_name):
-    with h5py.File(hdf5_file, 'r') as f:
-        data = f[episode_name][:]
-    return tf.data.Dataset.from_tensor_slices(data)
 
 def parse_hdf5_episode(episode_path): # adapted from github.com/moojink/rlds_dataset_builder
     #  Load raw data 
@@ -75,4 +70,9 @@ def parse_hdf5_episode(episode_path): # adapted from github.com/moojink/rlds_dat
 
         # If you want to skip an example for whatever reason, simply return None
         return episode_path, sample
+
+def hdf5_to_tfds(hdf5_file, episode_name):
+    with h5py.File(hdf5_file, 'r') as f:
+        data = f[episode_name][:]
+    return tf.data.Dataset.from_tensor_slices(data)
 

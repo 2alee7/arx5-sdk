@@ -96,3 +96,15 @@ def init_synced_cameras(config, resolution=(848, 480), fps=60):
 
     sync = FrameSynchronizer(buffers, locks)
     return workers, sync
+
+def pop_latest_frames(buffers, locks):
+    # Call pop_latest_frames on all buffers and return a list of frames
+    frames = []
+    for buffer, lock in zip(buffers, locks):
+        with lock:
+            if buffer:
+                frames.append(buffer.popleft()[1])
+            else:
+                frames.append(np.zeros((480, 848, 3), dtype=np.uint8))
+    return frames
+    

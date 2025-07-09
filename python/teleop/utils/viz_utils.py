@@ -1,5 +1,6 @@
 import cv2
 import time
+import numpy as np
 
 def display_camera_views(latest_frames, frames_queue, recording_event, stop_event):
     # TODO: Not working, poorly written
@@ -23,28 +24,28 @@ def display_camera_views(latest_frames, frames_queue, recording_event, stop_even
             cv2.putText(composite, label, pos, cv2.FONT_HERSHEY_SIMPLEX, 1.2, (255, 255, 255), 2)
 
         cv2.imshow("Camera Views", composite)
-        key = cv2.waitKey(1) & 0xFF
-        if key == 32:
-            if recording_event.is_set():
-                print("Recording stopped...")
-                recording_event.clear()
-            else:
-                print("Recording started...")
-                recording_event.set()
-        elif key == 27:
-            stop_event.set()
-            break
+        # key = cv2.waitKey(1) & 0xFF
+        # if key == 32:
+        #     if recording_event.is_set():
+        #         print("Recording stopped...")
+        #         recording_event.clear()
+        #     else:
+        #         print("Recording started...")
+        #         recording_event.set()
+        # elif key == 27:
+        #     stop_event.set()
+        #     break
 
-        if not recording_event.is_set() and not frames_queue.empty():
-            print("Recording session ended. Press 's' to save or any other key to discard.")
-            key = cv2.waitKey(0) & 0xFF
-            traj_path = get_next_traj_folder("observations")
-            if key == ord('s'):
-                save_frames_and_metadata(frames_queue, traj_path)
-                print(f"Recording saved as {traj_path}.")
-            else:
-                while not frames_queue.empty():
-                    frames_queue.get()
-                print("Recording discarded.")
+        # if not recording_event.is_set() and not frames_queue.empty():
+        #     print("Recording session ended. Press 's' to save or any other key to discard.")
+        #     key = cv2.waitKey(0) & 0xFF
+        #     traj_path = get_next_traj_folder("observations")
+        #     if key == ord('s'):
+        #         save_frames_and_metadata(frames_queue, traj_path)
+        #         print(f"Recording saved as {traj_path}.")
+        #     else:
+        #         while not frames_queue.empty():
+        #             frames_queue.get()
+        #         print("Recording discarded.")
 
     time.sleep(0.1)

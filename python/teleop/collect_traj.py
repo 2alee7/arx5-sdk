@@ -1,131 +1,163 @@
-import os
-import sys
 import threading
-import queue
-import time
 import signal
 import argparse
-import numpy as np
+import os
+import shutil
 import cv2
-from teleop.utils.realsense_utils import init_synced_cameras
-from teleop.utils.teleop_utils import (load_robot_config, initialize_controllers, poll_joint_states, save_frames_and_metadata, get_next_traj_folder)
+import numpy as np
+import sys
+from pynput import keyboard
+import time
+
+from arx5_interface import Arx5CartesianController, Gain, LogLevel
+
+from teleop.utils.realsense_utils import init_cameras, pop_latest_frames
+from teleop.utils.teleop_utils import (load_robot_config, initialize_controllers, poll_joint_states)
 from teleop.utils.control_loops import control_loop_open
 
-ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-sys.path.append(ROOT_DIR)
-os.chdir(ROOT_DIR)
-
-parser = argparse.ArgumentParser(description="Specify single side, robot or controller")
-parser.add_argument("--right", action="store_true")
-parser.add_argument("--left", action="store_true")
-parser.add_argument("--robot", type=int)
-parser.add_argument("--controller", type=int)
-args = parser.parse_args()
+def control_loop_poll(leader_controller: Arx5CartesianController, 
+                     follower_controller: Arx5CartesianController, stop_event, recording_event, states=None, 
+                     data_path=None, pause_event=None):
+    
+    # Loop timing control - 50Hz
+    target_loop_time = 0.02  # 50Hz
+    
+    while not (pause_event.is_set() or stop_event.is_set()):
+        loop_start = time.time()
+        
+        try:
+            # Get leader state
+            leader_state = ((leader_controller.get_eef_state(), leader_controller.get_joint_state()))
+            follower_state = ((follower_controller.get_eef_state(), follower_controller.get_joint_state()))
+            
+            # If recording, capture frameset and save state
+            if recording_event.is_set() and leader_state is not None:
+                timestamp = leader_controller.get_timestamp()
+                
+                frameset = pop_latest_frames()
+                
+                if frameset is not None:
+                    states.append({
+                        'timestamp': timestamp,
+                        'leader_state': leader_state,
+                        'follower_state': follower_state,
+                        'frames': frameset
+                    })
+            
+            # Send leader state to follower
+            follower_cmd = leader_state  # Creates a copy
+            follower_cmd.gripper_pos *= 4.8
+            follower_cmd.timestamp = 0.0
+            follower_controller.set_eef_cmd(follower_cmd)
+            
+        except Exception as e:
+            print(f"Error in control loop: {e}")
+        
+        elapsed = time.time() - loop_start
+        sleep_time = max(0, target_loop_time - elapsed)
+        time.sleep(sleep_time)
+        
+        if elapsed > target_loop_time:
+            print(f"Warning: Control loop taking longer than target: {elapsed:.4f}s")
+    
+    if stop_event.is_set():
+        print("Control loop stopped.")
+    else:
+        print("Control loop paused.")
 
 def main():
-    config = load_robot_config(os.path.join(os.path.dirname(os.path.abspath(__file__)), 'arx5_config.json'))
-    controllers = initialize_controllers(config, side='right' if args.right else 'left' if args.left else None)
-    # pipelines = initialize_cameras(config)
+    parser = argparse.ArgumentParser("collect_traj")
+    parser.add_argument("--config",   type=str, required=True)
+    parser.add_argument("--task",     type=str, required=True)
+    parser.add_argument("--timesteps",type=int, required=True)
+    parser.add_argument("--path",     type=str, required=True)
+    parser.add_argument("--side",     type=str, choices=["left","right"], required=True)
+    args = parser.parse_args()
 
-    stop_event = threading.Event()
+    cfg = load_robot_config(os.path.abspath(args.config))
+
+    states = []
+
+    # camera init
+    RES = (848, 480)
+    FPS = 60
+    cam_workers, syncer = init_cameras(cfg, RES, FPS)
+
+    # setup robot + joint‐state polling
+    controllers = initialize_controllers(cfg, side=args.side)
+    stop_event      = threading.Event()
     recording_event = threading.Event()
-    frames_queue = queue.Queue()
-    latest_frames = {}
 
-    def handle_sigint(sig, frame):
-        stop_event.set()
-        print("Interrupted by user, stopping...")
+    # # start joint‐state polling threads (they will only log when recording_event is set)
+    # for ctrl in controllers:
+    #     t = threading.Thread(
+    #         target=poll_joint_states,
+    #         args=(ctrl, args.path, stop_event, recording_event),
+    #         daemon=True
+    #     )
+    #     t.start()
 
-    signal.signal(signal.SIGINT, handle_sigint)
-
-    joint_state_threads = []
-    control_threads = []
-    control_stop_events = []
-
-    for leader, follower in controllers:
-        joint_states_queue = queue.Queue()
-
-        for ctrl in (leader, follower):
-            t = threading.Thread(
-                target=poll_joint_states,
-                args=(ctrl, joint_states_queue, stop_event, recording_event)
-            )
-            t.start()
-            joint_state_threads.append(t)
-
-        control_stop_event = threading.Event()
-        control_stop_events.append(control_stop_event)
+    for ctrl in controllers:
         t = threading.Thread(
-            target=control_loop_open,
-            args=(leader, follower, control_stop_event)
+            target=control_loop_poll,
+            args=(ctrl[0], ctrl[1], stop_event, recording_event, states),
+            daemon=True
         )
         t.start()
-        control_threads.append(t)
 
+    # keys: ENTER to start/stop, SPACE to pause/resume, CTRL+C to exit
+    def on_press(key):
+        if key == keyboard.Key.space:
+            if recording_event.is_set():
+                recording_event.clear()
+                print("  [PAUSED]")
+            else:
+                recording_event.set()
+                print("  [RESUMED]")
+    listener = keyboard.Listener(on_press=on_press)
+    listener.daemon = True
+    listener.start()
+
+    signal.signal(signal.SIGINT, lambda *_: stop_event.set())
+
+    print("Ready to record. Press ENTER to begin an episode.")
+    episode = 0
     try:
-        cv2.namedWindow("Camera Views", cv2.WINDOW_NORMAL)
         while not stop_event.is_set():
-            frames = []
-            for i in range(4):
-                frame = latest_frames.get(i, np.zeros((480, 848, 3), dtype=np.uint8))
-                if frame.shape[2] == 4:
-                    frame = cv2.cvtColor(frame, cv2.COLOR_BGRA2BGR)
-                frames.append(frame)
+            _ = input()  # ENTER
+            ep_dir = os.path.join(args.path, args.task, args.side, f"episode_{episode:03d}")
+            # prepare folders
+            for _, name in cam_workers:
+                os.makedirs(os.path.join(ep_dir, name), exist_ok=True)
+            print(f"  Recording episode {episode:03d} … [SPACE=pause/resume]")
+            recording_event.set()
 
-            row1 = cv2.hconcat([frames[0], frames[1]])
-            row2 = cv2.hconcat([frames[3], frames[2]])
-            composite = cv2.vconcat([row1, row2])
+            count = 0
+            while recording_event.is_set() and count < args.timesteps and not stop_event.is_set():
+                synced = syncer.next_synced_frames()
+                # synced is list of (ts,img)
+                for (ts, img), (_, name) in zip(synced, cam_workers):
+                    fname = os.path.join(ep_dir, name, f"{count:06d}.png")
+                    cv2.imwrite(fname, img)
+                count += 1
 
-            labels = ["top_vew", "front_view", "wrist_left", "wrist_right"]
-            positions = [(0, 480), (848, 480), (0, 960), (848, 960)]
-            for label, pos in zip(labels, positions):
-                cv2.putText(composite, label, pos, cv2.FONT_HERSHEY_SIMPLEX, 1.2, (255, 255, 255), 2)
-
-            cv2.imshow("Camera Views", composite)
-            key = cv2.waitKey(1) & 0xFF
-            if key == 32:
-                if recording_event.is_set():
-                    print("Recording stopped...")
-                    recording_event.clear()
-                else:
-                    print("Recording started...")
-                    recording_event.set()
-            elif key == 27:
-                stop_event.set()
-                break
-
-            if not recording_event.is_set() and not frames_queue.empty():
-                print("Recording session ended. Press 's' to save or any other key to discard.")
-                key = cv2.waitKey(0) & 0xFF
-                traj_path = get_next_traj_folder("observations")
-                if key == ord('s'):
-                    save_frames_and_metadata(frames_queue, traj_path)
-                    print(f"Recording saved as {traj_path}.")
-                else:
-                    while not frames_queue.empty():
-                        frames_queue.get()
-                    print("Recording discarded.")
-
-            time.sleep(0.1)
+            recording_event.clear()
+            print(f"  Episode ended ({count} frames). Save? (Y/N)")
+            ans = input().strip().lower()
+            if ans == "y":
+                episode += 1
+                print(f"  Saved as episode_{episode-1:03d}\nPress ENTER to start next…")
+            else:
+                shutil.rmtree(ep_dir)
+                print("  Discarded. Press ENTER to retry…")
 
     finally:
-
         stop_event.set()
-        cv2.destroyAllWindows()
-        recording_event.clear()
+        listener.stop()
+        for w, _ in cam_workers:
+            w.stop()
+        print("Shutdown complete.")
 
-        for leader, follower in controllers:
-            leader.set_to_damping()
-            follower.set_to_damping()
-            leader.reset_to_home()
-            follower.reset_to_home()
-
-        for t in joint_state_threads:
-            t.join()
-        for ev in control_stop_events:
-            ev.set()
-        for t in control_threads:
-            t.join()
 
 if __name__ == "__main__":
     main()

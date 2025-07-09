@@ -6,12 +6,11 @@ import argparse
 from pynput import keyboard
 import time
 
-
 ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.append(ROOT_DIR)
 os.chdir(ROOT_DIR)
 
-from utils.teleop_utils import load_robot_config, initialize_controllers
+from utils.teleop_utils import load_robot_config, initialize_controllers, poll_joint_states
 from utils.control_loops import control_loop_open
 
 
