@@ -3,7 +3,7 @@ import sys
 import signal
 import threading
 import argparse
-from pynput import keyboard
+# from pynput import keyboard # Removed to avoid dependency issues for SSH
 import time
 
 ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -56,19 +56,19 @@ def main():
     # Ctrl-C handler
     signal.signal(signal.SIGINT, lambda sig, frame: stop_event.set())
 
-    # Toggle pause via keyboard
-    def on_press(key):
-        if key == keyboard.Key.space:
-            if pause_event.is_set():
-                pause_event.clear()
-                print("Resuming control loops")
-            else:
-                pause_event.set()
-                print("Pausing control loops")
+    # # Toggle pause via keyboard
+    # def on_press(key):
+    #     if key == keyboard.Key.space:
+    #         if pause_event.is_set():
+    #             pause_event.clear()
+    #             print("Resuming control loops")
+    #         else:
+    #             pause_event.set()
+    #             print("Pausing control loops")
 
-    listener = keyboard.Listener(on_press=on_press)
-    listener.daemon = True
-    listener.start()
+    # listener = keyboard.Listener(on_press=on_press)
+    # listener.daemon = True
+    # listener.start()
 
     # Start threads
     threads = []
@@ -94,7 +94,7 @@ def main():
     stop_event.wait()
 
     # Cleanup
-    listener.stop()
+    # listener.stop()
     print("Stopping all threads...")
     stop_event.set()
     for t in threads:
