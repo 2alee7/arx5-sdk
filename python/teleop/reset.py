@@ -64,7 +64,7 @@ def initialize_controllers(config, side=None):
     return controllers, controller_names
 
 def main():
-    config = load_robot_config("/home/verityw/arx5-sdk/python/teleop/arx5_config.json")
+    config = load_robot_config("../../arx5-sdk/python/teleop/arx5_config.json")
     controllers, controller_names = initialize_controllers(config)
     return
 

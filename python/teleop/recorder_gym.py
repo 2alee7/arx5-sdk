@@ -13,6 +13,7 @@ import asyncio
 import queue
 from tqdm import tqdm
 from PIL import Image
+import argparse
 
 ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.append(ROOT_DIR)
@@ -30,34 +31,58 @@ def load_robot_config(config_path):
         config = json.load(file)
     return config
 
-def initialize_controllers(config, side=None):
+def initialize_controllers(config, side=None, follower_action_space="cartesian", leader_action_space="cartesian"):
     controllers = []
     controller_names = []
     urdf_path = "../models/arx5.urdf"
 
     def create_controller_pair(pair):
-        leader = Arx5CartesianController(
-            pair['leader']['model'],
-            pair['leader']['interface_name'],
-            urdf_path,
-        )
-        follower = Arx5CartesianController(
-            pair['follower']['model'],
-            pair['follower']['interface_name'],
-            urdf_path,
-        )
-        gain = Gain(
-            leader.get_controller_config().default_kp / 10000,
-            leader.get_controller_config().default_kd / 1000,
-            0.0,
-            0.0
-        )
+        if follower_action_space == "joint":
+            follower = Arx5JointController(
+                pair['follower']['model'],
+                pair['follower']['interface_name'],
+            )
+            follower.enable_background_send_recv()
+            # Do NOT turn on gravity compensation for follower when using joint control.
+            follower.enable_gravity_compensation(urdf_path)
+        elif follower_action_space == "cartesian":
+            follower = Arx5CartesianController(
+                pair['follower']['model'],
+                pair['follower']['interface_name'],
+                urdf_path,
+            )
+        if leader_action_space == "joint":
+            # leader = Arx5JointController(
+            #     pair['leader']['model'],
+            #     pair['leader']['interface_name'],
+            # )
+            # leader.enable_gravity_compensation(urdf_path)
+            # gain = Gain(
+            #     leader.get_controller_config().default_kp / 10000,
+            #     leader.get_controller_config().default_kd / 1000,
+            #     0.0,
+            #     0.0
+            # )
+            # leader.set_gain(gain)  # Set reduced damping coeffs. to leader only
+            raise NotImplementedError("Joint leader action space not implemented yet.")
+        elif leader_action_space == "cartesian":
+            leader = Arx5CartesianController(
+                pair['leader']['model'],
+                pair['leader']['interface_name'],
+                urdf_path,
+            )
+            gain = Gain(
+                leader.get_controller_config().default_kp / 10000,
+                leader.get_controller_config().default_kd / 1000,
+                0.0,
+                0.0
+            )
+            leader.set_gain(gain)  # Set reduced damping coeffs. to leader only
         
         leader.set_log_level(LogLevel.WARNING)
         follower.set_log_level(LogLevel.WARNING)
         leader.reset_to_home()
         follower.reset_to_home()
-        leader.set_gain(gain)  # Set reduced damping coeffs. to leader only
         controllers.append((leader, follower))
         controller_names.append((pair['leader']['name'], pair['follower']['name']))
 
@@ -107,7 +132,12 @@ def poll_joint_states(controller, joint_states_queue, stop_event, queue_event, r
     while not stop_event.is_set():
         if queue_event.is_set():
             timestamp = controller.get_timestamp()
-            state = controller.get_joint_state()
+            if type(controller) is Arx5JointController:
+                state = controller.get_state()
+            elif type(controller) is Arx5CartesianController:
+                state = controller.get_joint_state()
+            else:
+                raise TypeError("Controller must be either Arx5JointController or Arx5CartesianController.")
             joint_states_queue.put((timestamp, state))
         time.sleep(rate)
 
@@ -267,7 +297,12 @@ class ArxGym:
         starting_time = time.time()
 
         if self.action_space == "joint":
-            raise NotImplementedError("Joint action space not implemented yet.")
+            # raise NotImplementedError("Joint action space not implemented yet.")
+            for follower_name, follower_controller in self.follower_controllers.items():
+                # Convert action to joint state and set it to the follower controller
+                follower_cmd = action[follower_name]
+                # print(f"Setting joint command for follower {follower_name}: {follower_cmd.pos()}")
+                follower_controller.set_joint_cmd(follower_cmd)
         elif self.action_space == "cartesian":
             for follower_name, follower_controller in self.follower_controllers.items():
                 # Convert action to eef state and set it to the follower controller
@@ -283,16 +318,30 @@ class ArxGym:
         return self.get_obs(), None, None, {} # TODO: Implement proper return values for step method.
 
 
-def main():
-    config = load_robot_config("./arx5_config.json")
-    controllers, controller_names = initialize_controllers(config)
-    pipelines = initialize_cameras(config)
+def main(args):
+    follower_action_space = args.follower_action_space
+    leader_action_space = args.leader_action_space
+    if leader_action_space == "joint":
+        assert follower_action_space == "joint", "Leader action space must match follower action space when using joint control."
+    no_record = args.no_record
 
-    for camera_name, pipeline in pipelines.items():
-        image = pipeline.wait_for_frames().get_color_frame()
-        if image:
-            image = np.asanyarray(image.get_data())
-            print(f"Initial image from camera {camera_name} has shape: {image.shape}")
+    config_path = os.path.join(ROOT_DIR, "teleop", "arx5_config.json")
+    config = load_robot_config(config_path)
+    controllers, controller_names = initialize_controllers(
+        config,
+        follower_action_space=follower_action_space,
+        leader_action_space=leader_action_space,
+    )
+    if no_record:
+        print("Running without recording frames.")
+        pipelines = {}
+    else:
+        pipelines = initialize_cameras(config)
+        for camera_name, pipeline in pipelines.items():
+            image = pipeline.wait_for_frames().get_color_frame()
+            if image:
+                image = np.asanyarray(image.get_data())
+                print(f"Initial image from camera {camera_name} has shape: {image.shape}")
 
 
     stop_event = threading.Event()
@@ -322,7 +371,7 @@ def main():
         pipelines=pipelines,  # TODO: Pass initialized pipelines if cameras are used
         stop_recording_event=stop_event,
         queue_event=queue_event,
-        action_space="cartesian",  # Use cartesian action space for teleop
+        action_space=follower_action_space,
         ctrl_freq=CONTROL_FREQ,
         track_frame_index=False,  # Set to True if frame index tracking is needed
     )
@@ -331,26 +380,41 @@ def main():
     obs = env.reset()
     all_images = []
     try: 
-        for t in tqdm(range(MAX_STEPS)):
-            if t % 5 == 0:
-                # Save images
-                images = []
-                for camera_name, image_dict in obs["images"].items():
-                    image = image_dict["color_image"]
-                    images.append(image)
-                # Combine images into a single image
-                if len(images) > 0:
-                    image = np.concatenate(images, axis=1)
-                    all_images.append(Image.fromarray(image))
+        print("Starting the teleoperation loop. Press Ctrl+C to stop.")
+        while True:
+        # for t in tqdm(range(MAX_STEPS)):
+            # if t % 5 == 0:
+            #     # Save images
+            #     images = []
+            #     for camera_name, image_dict in obs["images"].items():
+            #         image = image_dict["color_image"]
+            #         images.append(image)
+            #     # Combine images into a single image
+            #     if len(images) > 0:
+            #         image = np.concatenate(images, axis=1)
+            #         all_images.append(Image.fromarray(image))
 
             action = {}
             for (leader_name, follower_name) in controller_names:
                 # Get the leader controller's eef state
-                leader_eef_state = leader_controllers[leader_name].get_eef_state()
-                # Create a follower command based on the leader's eef state
-                follower_cmd = leader_eef_state
-                follower_cmd.gripper_pos *= 4.8  # Scale gripper position
-                follower_cmd.timestamp = 0.0  # Reset timestamp
+                
+                
+
+                if follower_action_space == "joint":
+                    # Create a follower command based on the leader's joint state
+                    if leader_action_space == "joint":
+                        leader_joint_state = leader_controllers[leader_name].get_state()
+                    elif leader_action_space == "cartesian":
+                        leader_joint_state = leader_controllers[leader_name].get_joint_state()
+                    follower_cmd = leader_joint_state
+                    follower_cmd.gripper_pos *= 4.8  # Scale gripper position
+                    follower_cmd.timestamp = 0.0  # Reset timestamp
+                elif follower_action_space == "cartesian":
+                    # Create a follower command based on the leader's eef state
+                    leader_eef_state = leader_controllers[leader_name].get_eef_state()
+                    follower_cmd = leader_eef_state
+                    follower_cmd.gripper_pos *= 4.8  # Scale gripper position
+                    follower_cmd.timestamp = 0.0  # Reset timestamp
                 action[follower_name] = follower_cmd
             obs, reward, done, info = env.step(action)
 
@@ -368,14 +432,25 @@ def main():
             leader.reset_to_home()
             follower.reset_to_home()
 
-        # Save all images to disk
-        for t, image in enumerate(tqdm(all_images, desc="Saving images")):
-            image_path = f"../../arx5-sdk/TEMP/{t}.png"
-            image.save(image_path)
+        if not no_record:
+            # Save all images to disk
+            for t, image in enumerate(tqdm(all_images, desc="Saving images")):
+                image_path = f"../../arx5-sdk/TEMP/{t}.png"
+                image.save(image_path)
 
     # Stop all threads
     stop_event.set()
     queue_event.clear()
 
 if __name__ == "__main__":
-    main()
+    # Define args
+    parser = argparse.ArgumentParser(description="Run the ARX5 teleoperation recorder.")
+    parser.add_argument("--no-record", action="store_true", help="Run without recording frames.")
+    # TODO: Add side argument to specify which robot pair to control.
+    # parser.add_argument("--side", type=str, choices=["left", "right", "both"], help="Specify the side of the robot to control.")
+    parser.add_argument("--follower-action-space", type=str, choices=["joint", "cartesian"], default="cartesian",
+                        help="Action space for the follower controller (default: cartesian).")
+    parser.add_argument("--leader-action-space", type=str, choices=["joint", "cartesian"], default="cartesian",
+                        help="Action space for the leader controller (default: cartesian).")
+    args = parser.parse_args()
+    main(args)
