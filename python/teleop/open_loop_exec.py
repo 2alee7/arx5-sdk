@@ -321,11 +321,9 @@ class ArxGym:
 
 
 def main(args):
-    follower_action_space = args.follower_action_space
-    leader_action_space = args.leader_action_space
-    if leader_action_space == "joint":
-        assert follower_action_space == "joint", "Leader action space must match follower action space when using joint control."
-    no_record = args.no_record
+    follower_action_space = "joint"
+    leader_action_space = "cartesian"
+    no_record = True
 
     config_path = os.path.join(ROOT_DIR, "teleop", "arx5_config.json")
     config = load_robot_config(config_path)
@@ -380,12 +378,11 @@ def main(args):
     env.start_recording()
 
     obs = env.reset()
-    all_images = []
-    all_actions = []
+    all_actions = np.load('../../open_loop_actions.npy', allow_pickle=True)[::2]
     try: 
         print("Starting the teleoperation loop. Press Ctrl+C to stop.")
-        while True:
-        # for t in tqdm(range(MAX_STEPS)):
+        # while True:
+        for t in tqdm(range(MAX_STEPS)):
             # if t % 5 == 0:
             #     # Save images
             #     images = []
@@ -398,44 +395,18 @@ def main(args):
             #         all_images.append(Image.fromarray(image))
 
             action = {}
-            saved_action = {}
             for (leader_name, follower_name) in controller_names:
                 # Get the leader controller's eef state
 
-                if follower_action_space == "joint":
-                    # Create a follower command based on the leader's joint state
-                    if leader_action_space == "joint":
-                        leader_joint_state = leader_controllers[leader_name].get_state()
-                    elif leader_action_space == "cartesian":
-                        leader_joint_state = leader_controllers[leader_name].get_joint_state()
+                follower_cmd = JointState(
+                    all_actions[t][follower_name][:6].reshape(-1, 1), 
+                    np.zeros(6).reshape(-1, 1),
+                    np.zeros(6).reshape(-1, 1),
+                    all_actions[t][follower_name][6].reshape(-1, 1),
+                )
 
-                    follower_cmd = JointState(
-                        leader_joint_state.pos(), 
-                        np.zeros(6).reshape(-1, 1),
-                        np.zeros(6).reshape(-1, 1),
-                        leader_joint_state.gripper_pos,
-                    )
-                    
-                    # follower_cmd = leader_joint_state
-                    # follower_cmd.gripper_pos *= 4.8  # Scale gripper position
-                    # follower_cmd.timestamp = 0.0  # Reset timestamp
+                follower_cmd.timestamp = 0.0  # Reset timestamp
 
-                    # if "right" in follower_name:
-                    #     print(follower_cmd.vel())
-                    #     print(follower_cmd.torque())
-                    #     print("----------")
-
-                    # saved_action[follower_name] = np.zeros(7)
-                    # saved_action[follower_name][0:6] = follower_cmd.pos()
-                    # saved_action[follower_name][6] = follower_cmd.gripper_pos
-
-                elif follower_action_space == "cartesian":
-                    # Create a follower command based on the leader's eef state
-                    leader_eef_state = leader_controllers[leader_name].get_eef_state()
-                    follower_cmd = leader_eef_state
-                    follower_cmd.gripper_pos *= 4.8  # Scale gripper position
-                    follower_cmd.timestamp = 0.0  # Reset timestamp
-                all_actions.append(saved_action)
                 action[follower_name] = follower_cmd
             obs, reward, done, info = env.step(action)
 
@@ -447,19 +418,12 @@ def main(args):
         stop_event.set()
         queue_event.clear()
 
-        np.save('/home/verityw/arx5-sdk/open_loop_actions.npy', all_actions)
-
         for leader, follower in controllers:
             leader.set_to_damping()
             leader.reset_to_home()
             # follower.set_to_damping()
             # follower.reset_to_home()
 
-        if not no_record:
-            # Save all images to disk
-            for t, image in enumerate(tqdm(all_images, desc="Saving images")):
-                image_path = f"../../arx5-sdk/TEMP/{t}.png"
-                image.save(image_path)
 
     # Stop all threads
     stop_event.set()
