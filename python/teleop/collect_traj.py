@@ -9,7 +9,11 @@ import sys
 from pynput import keyboard
 import time
 
-from arx5_interface import Arx5CartesianController, Gain, LogLevel
+ROOT_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+sys.path.append(ROOT_DIR)
+os.chdir(ROOT_DIR)
+
+from arx5_interface import Arx5CartesianController
 
 from teleop.utils.realsense_utils import init_cameras, pop_latest_frames
 from teleop.utils.teleop_utils import (load_robot_config, initialize_controllers, poll_joint_states)

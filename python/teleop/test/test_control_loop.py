@@ -13,7 +13,6 @@ os.chdir(ROOT_DIR)
 from utils.teleop_utils import load_robot_config, initialize_controllers, poll_joint_states
 from utils.control_loops import control_loop_open
 
-
 def control_loop_runner(leader, follower, pause_event, stop_event):
     """
     Wraps control_loop_open to allow pausing/resuming via pause_event.
