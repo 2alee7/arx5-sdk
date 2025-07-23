@@ -1,0 +1,34 @@
+{
+  "arms": [
+    {
+      "side": "left",
+      "name": "left_follower",
+      "model": "L5",
+      "interface_name": "can3"
+    },
+    {
+      "side": "right", 
+      "name": "right_follower",
+      "model": "L5",
+      "interface_name": "can1"
+    }
+  ],
+  "cameras": [
+    {
+      "name": "cam_high",
+      "serial": "123456789012"
+    },
+    {
+      "name": "cam_low", 
+      "serial": "123456789013"
+    },
+    {
+      "name": "cam_left_wrist",
+      "serial": "123456789014"
+    },
+    {
+      "name": "cam_right_wrist",
+      "serial": "123456789015"
+    }
+  ]
+} 
