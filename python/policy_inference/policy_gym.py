@@ -34,12 +34,10 @@ else:
 # Import openpi client for policy server communication
 try:
     from openpi_client import websocket_client_policy
-    from openpi_client import image_tools
 except ImportError:
     print("Warning: openpi_client not found. Please install it to use policy inference.")
     print("You can install it with: pip install -e openpi/packages/openpi-client")
     websocket_client_policy = None
-    image_tools = None
 
 @contextmanager
 def prevent_keyboard_interrupt():
@@ -82,7 +80,7 @@ def initialize_controllers(config, follower_action_space="cartesian"):
                 )
                 follower.enable_background_send_recv()
                 # Do NOT turn on gravity compensation for follower when using joint control.
-                follower.enable_gravity_compensation(urdf_path)
+                # follower.enable_gravity_compensation(urdf_path)
             elif follower_action_space == "cartesian":
                 follower = Arx5CartesianController(
                     arm['model'],

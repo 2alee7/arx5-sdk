@@ -15,19 +15,19 @@
   ],
   "cameras": [
     {
-      "name": "left_camera",
+      "name": "cam_high",
       "serial": "123456789012"
     },
     {
-      "name": "right_camera", 
+      "name": "cam_low", 
       "serial": "123456789013"
     },
     {
-      "name": "wrist_left_camera",
+      "name": "cam_left_wrist",
       "serial": "123456789014"
     },
     {
-      "name": "wrist_right_camera",
+      "name": "cam_right_wrist",
       "serial": "123456789015"
     }
   ]
