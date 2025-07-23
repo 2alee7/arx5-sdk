@@ -29,7 +29,6 @@ locks = {}
 recording_event = threading.Event()
 stop_event = threading.Event()
 
-
 class CameraWorker(threading.Thread):
     def __init__(self, serial, cfg, buffer, lock):
         super().__init__(daemon=True)
