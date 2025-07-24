@@ -7,7 +7,7 @@
       "interface_name": "can3"
     },
     {
-      "side": "right", 
+      "side": "right",
       "name": "right_follower",
       "model": "L5",
       "interface_name": "can1"
@@ -16,19 +16,15 @@
   "cameras": [
     {
       "name": "cam_high",
-      "serial": "123456789012"
-    },
-    {
-      "name": "cam_low", 
-      "serial": "123456789013"
+      "serial": "218622278179"
     },
     {
       "name": "cam_left_wrist",
-      "serial": "123456789014"
+      "serial": "130322271932"
     },
     {
       "name": "cam_right_wrist",
-      "serial": "123456789015"
+      "serial": "130322272673"
     }
   ]
-} 
+}

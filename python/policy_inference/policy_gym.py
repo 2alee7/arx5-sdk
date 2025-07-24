@@ -16,17 +16,22 @@ import argparse
 import signal
 from contextlib import contextmanager
 
-ROOT_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-print("ROOT_DIR", ROOT_DIR)
+# ROOT_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+# print("ROOT_DIR", ROOT_DIR)
+# sys.path.append(ROOT_DIR)
+# os.chdir(ROOT_DIR)
+
+ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.append(ROOT_DIR)
 os.chdir(ROOT_DIR)
+
 
 # OFFLINE flag for testing without hardware
 OFFLINE = False
 
 if not OFFLINE:
     import pyrealsense2 as rs
-    from arx5_interface import Arx5CartesianController, Arx5JointController, Gain, LogLevel
+    from arx5_interface import Arx5CartesianController, Arx5JointController, Gain, LogLevel, JointState
 else:
     from offline_mocks import MockController, MockJointState, MockEefState, MockCamera, MockRs
     rs = MockRs
@@ -38,6 +43,58 @@ except ImportError:
     print("Warning: openpi_client not found. Please install it to use policy inference.")
     print("You can install it with: pip install -e openpi/packages/openpi-client")
     websocket_client_policy = None
+
+from typing import Dict
+
+import numpy as np
+import tree
+from typing_extensions import override
+
+from openpi_client import base_policy as _base_policy
+
+
+class ActionChunkBroker(_base_policy.BasePolicy):
+    """Wraps a policy to return action chunks one-at-a-time.
+
+    Assumes that the first dimension of all action fields is the chunk size.
+
+    A new inference call to the inner policy is only made when the current
+    list of chunks is exhausted.
+    """
+
+    def __init__(self, policy: _base_policy.BasePolicy, action_horizon: int):
+        self._policy = policy
+        self._action_horizon = action_horizon
+        self._cur_step: int = 0
+
+        self._last_results: Dict[str, np.ndarray] | None = None
+
+    @override
+    def infer(self, obs: Dict) -> Dict:  # noqa: UP006
+        if self._last_results is None:
+            self._last_results = self._policy.infer(obs)
+            self._cur_step = 0
+
+        def slicer(x):
+            if isinstance(x, np.ndarray):
+                return x[self._cur_step, ...]
+            else:
+                return x
+
+        results = tree.map_structure(slicer, self._last_results)
+        self._cur_step += 1
+
+        if self._cur_step >= self._action_horizon:
+            self._last_results = None
+
+        return results
+
+    @override
+    def reset(self) -> None:
+        self._policy.reset()
+        self._last_results = None
+        self._cur_step = 0
+
 
 @contextmanager
 def prevent_keyboard_interrupt():
@@ -80,7 +137,7 @@ def initialize_controllers(config, follower_action_space="cartesian"):
                 )
                 follower.enable_background_send_recv()
                 # Do NOT turn on gravity compensation for follower when using joint control.
-                # follower.enable_gravity_compensation(urdf_path)
+                follower.enable_gravity_compensation(urdf_path)
             elif follower_action_space == "cartesian":
                 follower = Arx5CartesianController(
                     arm['model'],
@@ -113,7 +170,7 @@ def initialize_cameras(config):
             pipeline = rs.pipeline()
             config = rs.config()
             config.enable_device(serial_no)
-            config.enable_stream(rs.stream.color, 848, 480, rs.format.bgra8, 30)
+            config.enable_stream(rs.stream.color, 640, 480, rs.format.bgra8, 30)
             pipeline.start(config)
             return pipeline
 
@@ -232,17 +289,17 @@ class ArxGym:
         # Start polling joint states for each follower controller
         self.joint_state_threads = {}
         self.ctrl_stop_events = {}
-        for follower_name, follower_controller in self.follower_controllers.items():
-            # Create a stop event for each follower controller's control loop
-            ctrl_stop_event = threading.Event()
-            self.follower_joint_states_queues[follower_name] = queue.Queue(maxsize=JOINT_MAX_SIZE)
-            t_follower = threading.Thread(
-                target=poll_joint_states,
-                args=(follower_controller, self.follower_joint_states_queues[follower_name], ctrl_stop_event, self.queue_event, 0.01)
-            )
-            t_follower.start()
-            self.joint_state_threads[follower_name] = t_follower
-            self.ctrl_stop_events[follower_name] = ctrl_stop_event
+        # for follower_name, follower_controller in self.follower_controllers.items():
+        #     # Create a stop event for each follower controller's control loop
+        #     ctrl_stop_event = threading.Event()
+        #     self.follower_joint_states_queues[follower_name] = queue.Queue(maxsize=JOINT_MAX_SIZE)
+        #     t_follower = threading.Thread(
+        #         target=poll_joint_states,
+        #         args=(follower_controller, self.follower_joint_states_queues[follower_name], ctrl_stop_event, self.queue_event, 0.01)
+        #     )
+        #     t_follower.start()
+        #     self.joint_state_threads[follower_name] = t_follower
+        #     self.ctrl_stop_events[follower_name] = ctrl_stop_event
 
     def reset(self):
         for follower_name, follower_controller in self.follower_controllers.items():
@@ -252,7 +309,7 @@ class ArxGym:
 
         return self.get_obs()  # Return the initial observation after reset
 
-    def get_obs(self):
+    def get_obs(self, skip_proprio=False):
         if self.stop_recording_event.is_set():
                 return None
         
@@ -269,16 +326,19 @@ class ArxGym:
         else:
             visual_obs = {}
 
+        if skip_proprio:
+            return {"images": visual_obs, "states": {}}
+
         state_obs = {}
-        for follower_name in self.follower_controllers.keys():
-            follower_joint_states_queue = self.follower_joint_states_queues[follower_name]
-            if not follower_joint_states_queue.empty():
-                # Get the latest joint state from the queue
-                timestamp, joint_state = follower_joint_states_queue.get()
-                state_obs[follower_name] = {
-                    'timestamp': timestamp,
-                    'joint_state': joint_state
-                }
+        for follower_name, follower_controller in self.follower_controllers.items():
+            joint_state = follower_controller.get_state()
+            full_joint_state = np.zeros(7)
+            full_joint_state[:6] = joint_state.pos()
+            full_joint_state[-1] = joint_state.gripper_pos
+            state_obs[follower_name] = {
+                "timestamp": 0,
+                "joint_state": full_joint_state
+            }
 
         return {
             "images": visual_obs,
@@ -287,9 +347,15 @@ class ArxGym:
     
     def format_observation_for_policy(self, obs):
         """Format observation for policy server input."""
+        left_state = obs["states"]["left_follower"]["joint_state"]
+        right_state = obs["states"]["right_follower"]["joint_state"]
+
+        left_state[-1] = np.clip(left_state[-1], 0, 1)
+        right_state[-1] = np.clip(right_state[-1], 0, 1)
+
         return {
-            "images": obs["images"],
-            "states": obs["states"],
+            "images": {k: v["color_image"] for k, v in obs["images"].items()},
+            "state": np.concatenate([left_state, right_state]),
             "prompt": self.instruction,
         }
     
@@ -309,7 +375,7 @@ class ArxGym:
         else:
             print("Recording is not active.")
 
-    def step(self, action):
+    def step(self, action, skip_proprio=False):
         starting_time = time.time()
 
         if self.action_space == "joint":
@@ -329,15 +395,15 @@ class ArxGym:
         elapsed_time = time.time() - starting_time
         if self.ctrl_freq > 0 and elapsed_time < (1 / self.ctrl_freq):
             time.sleep((1 / self.ctrl_freq) - elapsed_time)
-        
-        return self.get_obs(), None, None, {} # TODO: Implement proper return values for step method.
+
+        return self.get_obs(skip_proprio), None, None, {} # TODO: Implement proper return values for step method.
 
 
 def main(args):
     follower_action_space = args.follower_action_space
     no_record = args.no_record
 
-    config_path = os.path.join(ROOT_DIR, "python", "policy_inference", "arx5_config.json")
+    config_path = os.path.join(ROOT_DIR, "policy_inference", "arx5_config.json")
     config = load_robot_config(config_path)
     controllers, controller_names = initialize_controllers(
         config,
@@ -361,6 +427,7 @@ def main(args):
     # Connect to policy server
     print(f"Connecting to policy server at {args.policy_host}:{args.policy_port}")
     policy_client = websocket_client_policy.WebsocketClientPolicy(args.policy_host, args.policy_port)
+    policy_broker = ActionChunkBroker(policy_client, 25)
     print(f"Connected to policy server. Metadata: {policy_client.get_server_metadata()}")
 
     stop_event = threading.Event()
@@ -397,41 +464,106 @@ def main(args):
         # Prepare to save video of rollout
         timestamp = datetime.now().strftime("%Y_%m_%d_%H:%M:%S")
         video = []
+        states_list = []
+        actions_list = []
         
         # Start recording
         env.start_recording()
         obs = env.reset()
+        def pprint_dict(d, indent=0):
+            for key, value in d.items():
+                print(' ' * indent + str(key) + ': ', end='')
+                if isinstance(value, dict):
+                    print()
+                    pprint_dict(value, indent + 2)
+                elif hasattr(value, 'shape'):
+                    print(value.shape)
+                else:
+                    print(value)
+
+        print("Sending home command")
         
+        action = {
+            "left_follower": JointState(
+                np.array([-0.0005722, 0.00514984, 0.0043869, 0.06198978, -0.00247955, 0.0005722]).reshape(-1, 1),
+                np.zeros([6, 1]),
+                np.zeros([6, 1]),
+                np.array([np.clip(0.01953475, 0, 1)]).reshape(-1, 1)
+            ),
+            "right_follower": JointState(
+                np.array([-0.00324249, 0.00095367, -0.00171661, 0.02422333, -0.00514984, 0.00286102]).reshape(-1, 1),
+                np.zeros([6, 1]),
+                np.zeros([6, 1]),
+                np.array([np.clip(0.01953475, 0, 1)]).reshape(-1, 1)
+            )
+        }
+        # left_pos = np.array([ 0.76619339,  0.6910429,   0.29583454, -0.12836647,  0.27485275,  0.16155529])
+        # right_pos = np.array([-0.6311512,   0.84172535,  0.42668056, -0.12264442, -0.10357094, -0.16041088])
+        # action = {
+        #     "left_follower": JointState(
+        #         left_pos.reshape(-1, 1),
+        #         np.zeros([6, 1]),
+        #         np.zeros([6, 1]),
+        #         np.array([np.clip(0.01953475, 0, 1)]).reshape(-1, 1)
+        #     ),
+        #     "right_follower": JointState(
+        #         right_pos.reshape(-1, 1),
+        #         np.zeros([6, 1]),
+        #         np.zeros([6, 1]),
+        #         np.array([np.clip(0.01953475, 0, 1)]).reshape(-1, 1)
+        #     )
+        # }
+        time.sleep(3)
+        obs, _, _, _ = env.step(action)
+
         print("Running rollout... press Ctrl+C to stop early.")
         bar = tqdm(range(args.max_timesteps))
         
+        inference_call_count = 0
+
+        chunk_states = []
         for t_step in bar:
             start_time = time.time()
             try:
-                # Save video frame
-                if len(obs["images"]) > 0:
-                    # Get first camera image for video
-                    first_camera = list(obs["images"].keys())[0]
-                    video.append(obs["images"][first_camera]["color_image"])
-
                 # Send websocket request to policy server if it's time to predict a new chunk
-                if actions_from_chunk_completed == 0 or actions_from_chunk_completed >= args.open_loop_horizon:
+                if actions_from_chunk_completed == 0 or actions_from_chunk_completed >= 50:
+                    obs = env.get_obs()
+
+                    print("Sending request to policy server...")
                     actions_from_chunk_completed = 0
 
                     # Format observation for policy
-                    request_data = env.format_observation_for_policy(obs)
                     
+                    request_data = env.format_observation_for_policy(obs)
+                    submitted_obs_state = request_data["state"]
+                    print(inference_call_count, submitted_obs_state)
+
+                    # if inference_call_count >= 10:
+                    #     exit()
+
                     # Wrap the server call in a context manager to prevent Ctrl+C from interrupting it
                     # Ctrl+C will be handled after the server call is complete
                     with prevent_keyboard_interrupt():
                         # Get action chunk from policy server
                         try:
                             pred_action_chunk = policy_client.infer(request_data)["actions"]
+                            # pred_action_chunk = policy_broker.infer(request_data)["actions"]
                             print(f"Received action chunk of shape: {pred_action_chunk.shape}")
+
+                            if len(obs["images"]) > 0:
+                                # Get first camera image for video
+                                first_camera = list(obs["images"].keys())[0]
+                                video.append(obs["images"][first_camera]["color_image"])
+                                # actions_list.append(pred_action_chunk)
+                                # if inference_call_count > 0:
+                                #     states_list.append(chunk_states)
+                                #     chunk_states = []
                         except Exception as e:
                             print(f"Error getting action from policy server: {e}")
                             break
 
+                    inference_call_count += 1
+            
                 # Select current action to execute from chunk
                 if pred_action_chunk is not None:
                     action = pred_action_chunk[actions_from_chunk_completed]
@@ -442,9 +574,13 @@ def main(args):
                     for follower_name in controller_names:
                         # DROID outputs 8D actions, but ARX5 needs 6 DOF + 1 gripper
                         # action shape: [joint_vel_1, joint_vel_2, ..., joint_vel_6, gripper_pos, unused]
-                        joint_velocities = action[:6]  # First 6 dimensions are joint velocities (6 DOF)
-                        gripper_position = action[6]   # 7th dimension is gripper position
-                        
+                        if follower_name == "left_follower":
+                            joint_position = action[:6]  # First 6 dimensions are joint velocities (6 DOF)
+                            gripper_position = action[6]   # 7th dimension is gripper position
+                        elif follower_name == "right_follower":
+                            joint_position = action[7:13]  # Next 6 dimensions are joint velocities (6 DOF)
+                            gripper_position = action[13]  # 14th dimension is gripper position
+
                         if OFFLINE:
                             # Create mock joint command for offline testing
                             from offline_mocks import MockJointCommand
@@ -453,51 +589,44 @@ def main(args):
                             joint_cmd.gripper_pos = gripper_position
                         else:
                             # Create joint command with velocities
-                            from arx5_interface import JointCommand
-                            joint_cmd = JointCommand()
-                            joint_cmd.vel = joint_velocities  # Set joint velocities (6 DOF)
-                            joint_cmd.pos = None  # Don't set position (velocity control)
+                            follower_cmd = JointState(
+                                joint_position.reshape(-1, 1), 
+                                np.zeros(6).reshape(-1, 1),
+                                np.zeros(6).reshape(-1, 1),
+                                np.clip(gripper_position, 0, 1)
+                            )
                         
-                        # Binarize gripper action like DROID does
-                        if gripper_position > 0.5:
-                            gripper_position = 1.0
-                        else:
-                            gripper_position = 0.0
-                        
-                        # Set gripper position in the command
-                        joint_cmd.gripper_pos = gripper_position
-                        
-                        # Clip all dimensions of action to [-1, 1] like DROID
-                        joint_cmd.vel = np.clip(joint_cmd.vel, -1, 1)
-                        
-                        robot_action[follower_name] = joint_cmd
+                        robot_action[follower_name] = follower_cmd
                     
-                    obs, reward, done, info = env.step(robot_action)
+                    obs, reward, done, info = env.step(robot_action, skip_proprio=True)
 
-                # Sleep to match DROID data collection frequency
-                elapsed_time = time.time() - start_time
-                if elapsed_time < 1 / DROID_CONTROL_FREQUENCY:
-                    time.sleep(1 / DROID_CONTROL_FREQUENCY - elapsed_time)
+                # # Sleep to match DROID data collection frequency
+                # elapsed_time = time.time() - start_time
+                # if elapsed_time < 1 / DROID_CONTROL_FREQUENCY:
+                #     time.sleep(1 / DROID_CONTROL_FREQUENCY - elapsed_time)
                     
             except KeyboardInterrupt:
                 break
+        
+        print("stopping recording")
+        env.stop_recording()
+        env.reset()
 
         # Save video
         if len(video) > 0:
-            try:
-                from moviepy.editor import ImageSequenceClip
-                video = np.stack(video)
-                save_filename = "video_" + timestamp
-                ImageSequenceClip(list(video), fps=10).write_videofile(save_filename + ".mp4", codec="libx264")
-                print(f"Video saved as {save_filename}.mp4")
-            except ImportError:
-                print("moviepy not available, saving individual frames instead")
-                os.makedirs("frames", exist_ok=True)
-                for i, frame in enumerate(video):
-                    Image.fromarray(frame).save(f"frames/frame_{i:04d}.png")
-                save_filename = f"frames_{timestamp}"
+            print("saving video")
+            os.makedirs("/home/verityw/arx5-sdk/frames", exist_ok=True)
+            for i, frame in enumerate(video):
+                Image.fromarray(frame).save(f"/home/verityw/arx5-sdk/frames/frame_{i:04d}.png")
+            save_filename = f"frames_{timestamp}"
         else:
             save_filename = "no_video_" + timestamp
+
+        # Save stuff
+        save_dir_path = "/home/verityw/arx5-sdk/TEMP"
+        np.save(os.path.join(save_dir_path, "states.npy"), np.array(states_list))
+        np.save(os.path.join(save_dir_path, "actions.npy"), np.array(actions_list))
+        np.save(os.path.join(save_dir_path, "video.npy"), np.array(video))
 
         # Get success evaluation from user
         success: str | float | None = None
@@ -519,12 +648,12 @@ def main(args):
                     print("Please enter 'y', 'n', or a number between 0-100")
                     success = None
 
-        # Add result to dataframe
-        df = pd.concat([df, pd.DataFrame([{
-            "success": success,
-            "duration": t_step,
-            "video_filename": save_filename,
-        }])], ignore_index=True)
+        # # Add result to dataframe
+        # df = pd.concat([df, pd.DataFrame([{
+        #     "success": success,
+        #     "duration": t_step,
+        #     "video_filename": save_filename,
+        # }])], ignore_index=True)
 
         # Ask if user wants to do another evaluation
         if input("Do one more eval? (enter y or n): ").lower() != "y":
@@ -565,7 +694,7 @@ if __name__ == "__main__":
                         help="Action space for the follower controller (default: joint).")
     parser.add_argument("--policy-host", type=str, default="localhost", help="Policy server host (default: localhost).")
     parser.add_argument("--policy-port", type=int, default=8000, help="Policy server port (default: 8000).")
-    parser.add_argument("--max-timesteps", type=int, default=600, help="Maximum number of timesteps to record (default: 600).")
+    parser.add_argument("--max-timesteps", type=int, default=50*60, help="Maximum number of timesteps to record (default: 600).")
     parser.add_argument("--open-loop-horizon", type=int, default=8, help="Open loop horizon for policy (default: 8).")
     parser.add_argument("--save-video", action="store_true", help="Save video to disk.")
     parser.add_argument("--video-output-dir", type=str, default="./policy_recordings", help="Output directory for video (default: ./policy_recordings).")
