@@ -27,12 +27,10 @@ def initialize_controllers(config, side=None):
         leader = Arx5CartesianController(
             pair['leader']['model'],
             pair['leader']['interface_name'],
-            urdf_path,
         )
         follower = Arx5CartesianController(
             pair['follower']['model'],
             pair['follower']['interface_name'],
-            urdf_path,
         )
         controllers.append((leader, follower))
 

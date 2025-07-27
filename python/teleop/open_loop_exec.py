@@ -49,7 +49,6 @@ def initialize_controllers(config, side=None, follower_action_space="cartesian",
             follower = Arx5CartesianController(
                 pair['follower']['model'],
                 pair['follower']['interface_name'],
-                urdf_path,
             )
         if leader_action_space == "joint":
             # leader = Arx5JointController(
