@@ -2,4 +2,8 @@ build
 __pycache__
 *cpython*.so
 python/data
+<<<<<<< HEAD
 /.conda
+=======
+build*
+>>>>>>> upstream/main

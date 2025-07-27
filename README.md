@@ -1,20 +1,34 @@
-# C++ && Python SDK for ARX5 robot arm
+# C++ && Python Controller for ARX5 Robot Arm
+
+## Safety-Related Configs
+
+ - The safety checks in this controller are implemented through joint position, velocity, and torque limits. However, there is a trade-off between safety and reactiveness when setting these limits. To achieve a reasonable precision for our experiements, **the default values are insufficient to guarantee safety when the robot is close to singluarity or the input control signal includes a lot of noise**.
+- We highly recommend that users should **apply safety checks before sending control signals** (joint/eef) to the controller
+- Users could also modify the limit values of the joint velocity at their early stage of deployment.
+  - You can either directly change the default values in `config.h` for your robot model: [X5](https://github.com/real-stanford/arx5-sdk/blob/709f7ab7429f97c83e18687e650f3ee77d14719a/include/app/config.h#L96), [L5](https://github.com/real-stanford/arx5-sdk/blob/709f7ab7429f97c83e18687e650f3ee77d14719a/include/app/config.h#L140C25-L140C57) and **recompile the package**
+  - Or (more recommended) change the config values before instanticating the controller in python, similar to [this example](https://github.com/real-stanford/arx5-sdk/blob/709f7ab7429f97c83e18687e650f3ee77d14719a/python/examples/test_joint_control.py#L31). You need to set the values with a new numpy array, e.g. `robot_config.joint_vel_max=np.array([2,2,2,2,2,2])`, rather than indexing some of the existing values `robot_config.joint_vel_max[0]=2.0`, which will raise an error.
+
+## Update (2024.12.05)
+- Add safety checks to zmq_server
+- Unify the joint interpolator in both joint controller and cartesian controller for better smoothness
+- Support trajectory updating and velocity interpolation
+- Fix various bugs for gravity compensation, robot initialization etc.
 
 ## Update (2024.08.22)
 - Enable one-step waypoint scheduling (see `python/examples`).
 - Support EtherCAT-CAN adapter (follow the instructions in [EtherCAT-CAN setup](README.md#ethercat-can-setup)).
 - Support arbitrary DoF robot arm (not only 6DoF); thoguh other DoF numbers are not tested yet.
-- Allow setting up robot and controller configurations as arguments (see `config.h` and `test_joint_control.py`).
+- Allow setting up robot and controller configurations as arguments (see `config.h` and `test_joint_control.py`), thanks to [Yifan Hou](https://yifan-hou.github.io/)
 
 When updating the sdk to your codebase, please first remove the entire `build` folder and run the building process again.
 
 ## Features
 - Run without ROS
 - No `sudo` requirement for building the library (all dependencies are managed under conda environment, thanks to [Cheng Chi](https://cheng-chi.github.io/))
-- Simple python interface with complete type hints (see `python/arx5_interface.pyi`)
+- Simple python interface with complete type hints (see `python/arx5_interface.pyi`, please include it into your vscode config `"python.analysis.extraPaths"`)
 - Joint controller runs at 500Hz in the background (motor communication delay ~0.4ms)
 - Cartesian space controller with keyboard and SpaceMouse tele-operation and teach-replay (thanks to [Cheng Chi](https://cheng-chi.github.io/))
-- Control multiple arms in the same process through C++ multi-threading
+- Control multiple arms in the same process through C++ multi-threading (much better than Python multi-processing)
 
 ## Build & Install
 We set up a conda environment for all the cmake dependencies, so no system package is required. If you want to run `cmake` and `make` after modifying the C++ source files, please make sure you are under the created conda environment (`arx-py310` etc.).  
@@ -86,12 +100,13 @@ Copy and paste the following, and replace the serial number with yours. If you a
 SUBSYSTEM=="tty", ATTRS{idVendor}=="16d0", ATTRS{idProduct}=="117e", ATTRS{serial}=="209738924D4D", SYMLINK+="arxcan0"
 ```
 
-Finally, activate CAN connection by: (the second line should be run every time after connection)
+Finally, activate CAN connection by: (**the second line should be run every time after connection**)
 ``` sh
 sudo udevadm control --reload-rules && sudo udevadm trigger
 sudo slcand -o -f -s8 /dev/arxcan0 can0 && sudo ifconfig can0 up
 ```
 
+<<<<<<< HEAD
 Example alias for ease (add to ~/.bashrc): 
 
 ``` sh
@@ -105,13 +120,44 @@ For the error: `ioctl SIOCSIFNAME rename: File exists`, run: `sudo killall slcan
 
 For: `write: Input/output error`, disconnect & reconnect all robots from the machine. This error is caused when an already activated connection is re-activated. For now, all connections need to be activated simultaneously.
 
+=======
+Alternatively, if you want not to run the second line everytime, you can also setup a system service:
+
+```sh
+sudo vi /etc/systemd/system/arxcan-setup.service
+```
+
+Copy the following content to the service file
+
+```service
+[Unit]
+After=network.target
+
+[Service]
+Type=oneshot
+ExecStart=/bin/sh -c 'slcand -o -f -s8 /dev/arxcan0 can0 && ip link set can0 up'
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target
+```
+
+And activate the service
+
+```
+sudo systemctl daemon-reload
+sudo systemctl enable arxcan-setup.service
+sudo systemctl start arxcan-setup.service
+sudo systemctl status arxcan-setup.service
+```
+>>>>>>> upstream/main
 
 ### For adapters using candleLight framework
 After plugging the adapter and running `ip a`, you should immediately find a can interface (usually `can0`). If you only have one arm, simply run 
 ```sh
 sudo ip link set up can0 type can bitrate 1000000
 ```
-and you are good to go. You should run it **every time** after connecting a usb-can adaptor.
+and you are good to go. You should run it **every time** after connecting a usb-can adapter.
 If you have multiple arms and you want to fix the CAN interface name mapping for each arm, you need to register the adapter to the CAN rules:
 ```sh
 sudo dmesg # Find the idVendor, idProduct and serial number of your adapter
@@ -125,7 +171,7 @@ Run the following line to update the changes
 ```sh
 sudo udevadm control --reload-rules && sudo systemctl restart systemd-udevd && sudo udevadm trigger
 ```
-Finally, reconnect your adapter and run (This line should be run every time after plugging the usb-can adaptor)
+Finally, reconnect your adapter and run (**This line should be run every time after plugging the usb-can adapter**)
 ```sh
 sudo ip link set up can0 type can bitrate 1000000
 ```

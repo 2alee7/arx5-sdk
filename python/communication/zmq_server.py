@@ -31,33 +31,24 @@ class Arx5Server:
         zmq_port: int,
         model: str,
         interface: str,
-        urdf_path: str,
         no_cmd_timeout: float = 60.0,
     ):
         self.model = model
         self.interface = interface
-        self.urdf_path = urdf_path
-        self.arx5_cartesian_controller = arx5.Arx5CartesianController(
-            model, interface, urdf_path
-        )
+        self.arx5_cartesian_controller = arx5.Arx5CartesianController(model, interface)
         print(f"Arx5Server is initialized with {model} on {interface}")
         self.context = zmq.Context()
         self.socket = self.context.socket(zmq.REP)
         self.socket.bind(f"tcp://{zmq_ip}:{zmq_port}")
         self.poller = zmq.Poller()
         self.poller.register(self.socket, zmq.POLLIN)
-        self.default_gain = arx5.Gain(
-            self.arx5_cartesian_controller.get_robot_config().joint_dof
-        )
-        self.default_gain.kp()[:] = np.array([150.0, 150.0, 200.0, 60.0, 30.0, 30.0])
-        self.default_gain.kd()[:] = np.array([5.0, 5.0, 5.0, 1.0, 1.0, 1.0])
 
         self.zmq_ip = zmq_ip
         self.zmq_port = zmq_port
         self.last_cmd_time = time.monotonic()
         self.no_cmd_timeout = no_cmd_timeout
         self.is_reset_to_home = False
-
+        self.last_eef_cmd: npt.NDArray[np.float64] | None = None
     def run(self):
         print(f"Arx5ZmqServer is running on {self.zmq_ip}:{self.zmq_port}")
         while True:
@@ -68,7 +59,7 @@ class Arx5Server:
                     if self.arx5_cartesian_controller is None:
                         print(f"Reestablishing high level controller")
                         self.arx5_cartesian_controller = arx5.Arx5CartesianController(
-                            self.model, self.interface, self.urdf_path
+                            self.model, self.interface
                         )
                 else:
 
@@ -78,6 +69,7 @@ class Arx5Server:
                         )
                         self.arx5_cartesian_controller.reset_to_home()
                         self.arx5_cartesian_controller.set_to_damping()
+                        self.last_eef_cmd = None
                         del self.arx5_cartesian_controller
                         self.arx5_cartesian_controller = None
                     continue
@@ -99,7 +91,11 @@ class Arx5Server:
                     continue
                 if msg["cmd"] == "GET_STATE":
                     # print(f"Received GET_STATE message")
+                    eef_pose_cmd = self.arx5_cartesian_controller.get_eef_cmd()
                     eef_state = self.arx5_cartesian_controller.get_eef_state()
+
+                    print(f"{eef_pose_cmd}")
+                    print(f"{eef_state.pose_6d()}")
                     low_state = self.arx5_cartesian_controller.get_joint_state()
                     reply_msg = {
                         "cmd": "GET_STATE",
@@ -116,8 +112,31 @@ class Arx5Server:
                     }
                     self.socket.send_pyobj(reply_msg)
                 elif msg["cmd"] == "SET_EE_POSE":
+                    if self.last_eef_cmd is None:
+                        error_str = "Error: Cannot set EE pose before RESET_TO_HOME. Please check the input."
+                        print(error_str)
+                        self.socket.send_pyobj(
+                            {
+                                "cmd": "SET_EE_POSE",
+                                "data": error_str,
+                            }
+                        )
+                        continue
                     # print(f"Received SET_EE_POSE message, data: {msg['data']}")
                     target_ee_pose = cast(np.ndarray, msg["data"]["ee_pose"])
+
+                    if np.linalg.norm(target_ee_pose - self.last_eef_cmd) > 0.1:
+                        error_str = f"Error: Cannot set EE pose {target_ee_pose} far away from last command: {self.last_eef_cmd}. Please check the input."
+                        print(error_str)
+                        self.socket.send_pyobj(
+                            {
+                                "cmd": "SET_EE_POSE",
+                                "data": error_str,
+                            }
+                        )
+                        continue
+                    self.last_eef_cmd = target_ee_pose.copy()
+                    
                     if msg["data"]["gripper_pos"] is not None:
                         target_gripper_pos = cast(float, msg["data"]["gripper_pos"])
                     else:
@@ -126,7 +145,13 @@ class Arx5Server:
                             self.arx5_cartesian_controller.get_eef_state().gripper_pos
                         )
                     if self.is_reset_to_home:
-                        if np.linalg.norm(target_ee_pose) > 0.1:
+                        if (
+                            np.linalg.norm(
+                                target_ee_pose
+                                - self.arx5_cartesian_controller.get_home_pose()
+                            )
+                            > 0.1
+                        ):
                             error_str = f"Error: Cannot set EE pose far away from home: {target_ee_pose} after RESET_TO_HOME. Please check the input."
                             print(error_str)
                             self.socket.send_pyobj(
@@ -160,11 +185,11 @@ class Arx5Server:
                 elif msg["cmd"] == "RESET_TO_HOME":
                     print(f"Received RESET_TO_HOME message")
                     self.arx5_cartesian_controller.reset_to_home()
-                    self.arx5_cartesian_controller.set_gain(self.default_gain)
                     reply_msg = {
                         "cmd": "RESET_TO_HOME",
                         "data": "OK",
                     }
+                    self.last_eef_cmd = self.arx5_cartesian_controller.get_eef_cmd().pose_6d().copy()
                     self.socket.send_pyobj(reply_msg)
                     self.is_reset_to_home = True
                 elif msg["cmd"] == "SET_TO_DAMPING":
@@ -224,14 +249,12 @@ class Arx5Server:
 
 
 @click.command()
-@click.option("--model", "-m", required=True, help="ARX5 model name: X5 or L5")
-@click.option("--interface", "-i", required=True, help="can bus name (can0 etc.)")
-@click.option("--urdf_path", "-u", default="../models/arx5.urdf", help="URDF file path")
-def main(model: str, interface: str, urdf_path: str):
+@click.argument("model")  # ARX arm model: X5 or L5
+@click.argument("interface")  # can bus name (can0 etc.)
+def main(model: str, interface: str):
     server = Arx5Server(
         model=model,
         interface=interface,
-        urdf_path=urdf_path,
         zmq_ip="0.0.0.0",
         zmq_port=8765,
     )
