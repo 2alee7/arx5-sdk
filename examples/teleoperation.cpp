@@ -47,7 +47,7 @@ int main()
 
     while (true)
     {
-        JointState leader_joint_state = arx5_leader_controller->get_state();
+        JointState leader_joint_state = arx5_leader_controller->get_joint_state();
         JointState follower_cmd = JointState(dof);
         follower_cmd.pos = leader_joint_state.pos;
         follower_cmd.gripper_pos *= 4.8;

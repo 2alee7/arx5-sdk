@@ -106,7 +106,6 @@ sudo udevadm control --reload-rules && sudo udevadm trigger
 sudo slcand -o -f -s8 /dev/arxcan0 can0 && sudo ifconfig can0 up
 ```
 
-<<<<<<< HEAD
 Example alias for ease (add to ~/.bashrc): 
 
 ``` sh
@@ -120,7 +119,6 @@ For the error: `ioctl SIOCSIFNAME rename: File exists`, run: `sudo killall slcan
 
 For: `write: Input/output error`, disconnect & reconnect all robots from the machine. This error is caused when an already activated connection is re-activated. For now, all connections need to be activated simultaneously.
 
-=======
 Alternatively, if you want not to run the second line everytime, you can also setup a system service:
 
 ```sh
@@ -150,7 +148,6 @@ sudo systemctl enable arxcan-setup.service
 sudo systemctl start arxcan-setup.service
 sudo systemctl status arxcan-setup.service
 ```
->>>>>>> upstream/main
 
 ### For adapters using candleLight framework
 After plugging the adapter and running `ip a`, you should immediately find a can interface (usually `can0`). If you only have one arm, simply run 
