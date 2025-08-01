@@ -502,20 +502,35 @@ void Arx5ControllerBase::update_output_cmd_()
                            robot_config_.gripper_width);
         output_joint_cmd_.gripper_pos = robot_config_.gripper_width;
     }
-    if (std::abs(joint_state_.gripper_torque) > robot_config_.gripper_torque_max / 2)
+    if (std::abs(joint_state_.gripper_torque) > robot_config_.gripper_torque_max / 2.0)
     {
-        double sign = joint_state_.gripper_torque > 0 ? 1 : -1; // -1 for closing blocked, 1 for opening blocked
-        double delta_pos =
-            output_joint_cmd_.gripper_pos - prev_output_cmd.gripper_pos; // negative for closing, positive for opening
-        if (delta_pos * sign > 0)
+        double scale =
+            std::exp(-100.0 * (std::abs(joint_state_.gripper_torque) - robot_config_.gripper_torque_max / 2.0) /
+                     (robot_config_.gripper_torque_max / 2.0));
+
+        if (scale < 0.0)
+            scale = 0.0;
+        else if (scale > 1.0)
+            scale = 1.0;
+
+        double sign = joint_state_.gripper_torque > 0 ? 1.0 : -1.0;
+        double delta_pos = output_joint_cmd_.gripper_pos - prev_output_cmd.gripper_pos;
+
+        if (delta_pos * sign > 0.0) // pushing into load
         {
+            output_joint_cmd_.gripper_torque *= scale;
             if (prev_gripper_updated_)
-                logger_->warn("Gripper torque is too large, gripper pos cmd is not updated");
-            output_joint_cmd_.gripper_pos = prev_output_cmd.gripper_pos;
+                logger_->warn("Gripper torque scaled down due to high measured torque");
             prev_gripper_updated_ = false;
         }
         else
-            prev_gripper_updated_ = true;
+        {
+            prev_gripper_updated_ = true; // moving in relief direction
+        }
+    }
+    else
+    {
+        prev_gripper_updated_ = true;
     }
 
     // Torque clipping
@@ -591,7 +606,8 @@ void Arx5ControllerBase::send_recv_()
         double gripper_motor_pos =
             output_joint_cmd_.gripper_pos / robot_config_.gripper_width * robot_config_.gripper_open_readout;
         can_handle_.send_DM_motor_cmd(robot_config_.gripper_motor_id, gain_.gripper_kp, gain_.gripper_kd,
-                                      gripper_motor_pos, 0, 0);
+                                      gripper_motor_pos, 0,
+                                      output_joint_cmd_.gripper_torque / torque_constant_DM_J4310);
         int finish_send_motor_time_us = get_time_us();
         sleep_us(communicate_sleep_us - (finish_send_motor_time_us - start_send_motor_time_us));
     }
