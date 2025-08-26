@@ -80,8 +80,14 @@ class ARX5TeleopDriver:
         gain.kp()[:] = controller_config.default_kp * 0.5  # Reduce stiffness
         gain.kd()[:] = controller_config.default_kd * 0.8  # Maintain damping
         
+        # IMPORTANT: Set gripper gain for gripper control to work
+        gain.gripper_kp = controller_config.default_gripper_kp * 0.8  # Enable gripper control
+        gain.gripper_kd = controller_config.default_gripper_kd * 0.8  # Set gripper damping
+        
+        print(f"Setting gripper gains: kp={gain.gripper_kp:.2f}, kd={gain.gripper_kd:.2f}")
+        
         self.follower.set_gain(gain)
-        self.follower.set_log_level(arx5.LogLevel.WARNING)
+        self.follower.set_log_level(arx5.LogLevel.INFO)  # More verbose for debugging
         
     def get_leader_state(self) -> np.ndarray:
         """Get current state from Dynamixel leader arm"""
@@ -91,12 +97,9 @@ class ARX5TeleopDriver:
         """Get current state from ARX5 follower"""
         return self.follower.get_joint_state()
         
-    def teleop_step(self, gripper_threshold: float = 0.2) -> bool:
+    def teleop_step(self) -> bool:
         """
         Execute one teleoperation step
-        
-        Args:
-            gripper_threshold: Threshold for gripper activation (0-1)
             
         Returns:
             bool: True if teleoperation should continue, False to stop
@@ -113,16 +116,23 @@ class ARX5TeleopDriver:
             follower_config = self.follower.get_robot_config()
             gripper_pos = leader_gripper * follower_config.gripper_width * self.gripper_scaling
             
+            # Debug gripper values
+            print(f"Leader gripper: {leader_gripper:.3f}, Follower gripper_pos: {gripper_pos:.4f}m, Max: {follower_config.gripper_width:.4f}m")
+            
+            # Validate gripper bounds
+            if gripper_pos < 0:
+                gripper_pos = 0.0
+            elif gripper_pos > follower_config.gripper_width:
+                gripper_pos = follower_config.gripper_width
+            
             # Create ARX5 command
             follower_cmd = arx5.JointState(follower_config.joint_dof)
             follower_cmd.pos()[:] = leader_positions
             follower_cmd.gripper_pos = gripper_pos
             
-            # Check for safety stop (gripper threshold)
-            if leader_gripper < gripper_threshold:
-                # Emergency stop - set to damping mode
-                self.follower.set_to_damping()
-                return False
+            # Check current gripper state for comparison
+            current_state = self.follower.get_joint_state()
+            print(f"Current gripper pos: {current_state.gripper_pos:.4f}m, Command: {gripper_pos:.4f}m")
             
             # Send command to ARX5
             self.follower.set_joint_cmd(follower_cmd)
@@ -151,11 +161,11 @@ ARX5_CONFIG_RIGHT = ARX5DynamixelConfig(
         3 * np.pi/2,
         3 * np.pi/2,
         2 * np.pi/2,
-        3 * np.pi/2,
+        2 * np.pi/2,
         2 * np.pi/2
     ),
-    joint_signs=(1, 1, 1, 1, 1, 1),
-    gripper_config=(6, 280, 230),  # (joint_id, open_position, closed_position)
+    joint_signs=(1, -1, -1, -1, 1, 1),
+    gripper_config=(6, 186, 145),  # (joint_id, open_position, closed_position)
     
     # ARX5 follower configuration
     arx5_model="L5",
@@ -173,8 +183,8 @@ ARX5_CONFIG_LEFT = ARX5DynamixelConfig(
         3 * np.pi/2,
         2 * np.pi/2
     ),
-    joint_signs=(1, 1, 1, 1, 1, 1),
-    gripper_config=(6, 147, 186),  # (joint_id, open_position, closed_position)
+    joint_signs=(1, -1, -1, -1, 1, 1),
+    gripper_config=(6, 168, 214),  # (joint_id, open_position, closed_position)
 
     # ARX5 follower configuration
     arx5_model="L5",
@@ -183,33 +193,100 @@ ARX5_CONFIG_LEFT = ARX5DynamixelConfig(
 
 
 def main():
-    """Example teleoperation loop"""
+    """Bimanual teleoperation loop for left and right ARX5 arms"""
     import time
+    import threading
+    import argparse
     
-    # Initialize teleoperation driver
-    teleop = ARX5TeleopDriver(
-        config=ARX5_CONFIG_RIGHT,
-        dynamixel_port="/dev/ttyUSB2",  # Adjust to your Dynamixel port
-        joint_scaling=1.0,
-        gripper_scaling=1.0
-    )
+    # Parse command line arguments
+    parser = argparse.ArgumentParser(description='ARX5 Bimanual Teleoperation')
+    parser.add_argument('--left-port', default='/dev/ttyUSB1', 
+                       help='Dynamixel port for left arm leader (default: /dev/ttyUSB1)')
+    parser.add_argument('--right-port', default='/dev/ttyUSB2', 
+                       help='Dynamixel port for right arm leader (default: /dev/ttyUSB2)')
+    parser.add_argument('--single-arm', choices=['left', 'right'], 
+                       help='Run single arm only (left or right)')
+    parser.add_argument('--joint-scaling', type=float, default=1.0,
+                       help='Joint scaling factor (default: 1.0)')
+    parser.add_argument('--gripper-scaling', type=float, default=1.0,
+                       help='Gripper scaling factor (default: 1.0)')
     
-    print("Starting ARX5 teleoperation. Close gripper fully to stop.")
+    args = parser.parse_args()
+    
+    teleop_drivers = {}
+    threads = {}
+    stop_event = threading.Event()
+    
+    def run_arm_teleop(arm_name, driver):
+        """Run teleoperation for a single arm"""
+        print(f"Starting {arm_name} arm teleoperation")
+        try:
+            while not stop_event.is_set():
+                driver.teleop_step()
+                time.sleep(0.02)  # 50 Hz
+        except Exception as e:
+            print(f"{arm_name} arm error: {e}")
+            stop_event.set()
     
     try:
-        while True:
-            # Execute teleoperation step
-            if not teleop.teleop_step(gripper_threshold=0.2):
-                print("Teleoperation stopped (gripper threshold reached)")
-                break
-                
-            # Control loop frequency (50 Hz)
-            time.sleep(0.02)
+        # Initialize drivers based on arguments
+        if args.single_arm != 'right':  # Include left arm
+            print(f"Initializing LEFT arm with port {args.left_port}")
+            teleop_drivers['left'] = ARX5TeleopDriver(
+                config=ARX5_CONFIG_LEFT,
+                dynamixel_port=args.left_port,
+                joint_scaling=args.joint_scaling,
+                gripper_scaling=args.gripper_scaling
+            )
+        
+        if args.single_arm != 'left':  # Include right arm
+            print(f"Initializing RIGHT arm with port {args.right_port}")
+            teleop_drivers['right'] = ARX5TeleopDriver(
+                config=ARX5_CONFIG_RIGHT,
+                dynamixel_port=args.right_port,
+                joint_scaling=args.joint_scaling,
+                gripper_scaling=args.gripper_scaling
+            )
+        
+        print(f"Starting ARX5 {'bimanual' if len(teleop_drivers) == 2 else args.single_arm} teleoperation. Press Ctrl+C to stop.")
+        
+        # Start threads for each arm
+        for arm_name, driver in teleop_drivers.items():
+            thread = threading.Thread(
+                target=run_arm_teleop,
+                args=(arm_name, driver),
+                daemon=True
+            )
+            threads[arm_name] = thread
+            thread.start()
+        
+        # Wait for interruption
+        while not stop_event.is_set():
+            time.sleep(0.1)
             
     except KeyboardInterrupt:
-        print("Teleoperation interrupted by user")
+        print("\nTeleoperation interrupted by user")
+        stop_event.set()
+    except Exception as e:
+        print(f"Error during initialization: {e}")
+        stop_event.set()
     finally:
-        teleop.shutdown()
+        # Shutdown all drivers
+        print("Shutting down...")
+        stop_event.set()
+        
+        # Wait for threads to finish
+        for thread in threads.values():
+            thread.join(timeout=1.0)
+        
+        # Shutdown drivers
+        for arm_name, driver in teleop_drivers.items():
+            try:
+                print(f"Shutting down {arm_name} arm")
+                driver.shutdown()
+            except Exception as e:
+                print(f"Error shutting down {arm_name} arm: {e}")
+        
         print("Teleoperation ended safely")
 
 
